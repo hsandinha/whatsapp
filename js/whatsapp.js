@@ -22,7 +22,7 @@ function enviarMensagensWhatsApp() {
     
     
     // URL da imagem a ser anexada
-    var imagemUrl = "http://localhost/entrega/img/Tabela.png";
+    var imagemUrl = "/img/Tabela.png";
     
     // Constrói o objeto de requisição
     var request = new XMLHttpRequest();
