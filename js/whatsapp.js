@@ -17,11 +17,9 @@ function enviarMensagensWhatsApp() {
   function enviarWhatsApp(nome, whatsapp) {
     var mensagem = "Ola " + nome + ", Jato de Areia agradece  a nossa parceria. Segue nossa tabela!";
     
-    // Substitua o número de telefone abaixo pelo número desejado
+
     var numeroTelefone = whatsapp;
     
-    // Substitua o token abaixo pelo seu token da API do WhatsApp
-    var token = "SEU_TOKEN_API_WHATSAPP";
     
     // URL da imagem a ser anexada
     var imagemUrl = "http://localhost/entrega/img/Tabela.png";
