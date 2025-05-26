@@ -1,15 +1,22 @@
 <!DOCTYPE html>
-<html>
-  <head>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Exibição de Arquivo XLSX</title>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" type="text/css" href="style.css" />
     <script defer type="text/javascript" src="javascript.js"></script>
-  </head>
-  <body>
+</head>
+<body>
+    <div class="logo">
+        <img src="imagens/logo_preto.png" alt="Logomarca da Empresa">
+    </div>
+
+    
     <input type="file" id="input" accept=".xlsx" onchange="handleFile(event)" />
-    <div id="output"></div>
-    <br /><br />
     <button onclick="sendWhatsAppMessages()">Enviar WhatsApp</button>
-  </body>
+    <div id="output"></div>
+
+</body>
 </html>
