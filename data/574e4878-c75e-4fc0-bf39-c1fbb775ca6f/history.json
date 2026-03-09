@@ -1,0 +1,18 @@
+[
+  {
+    "messagePreview": "teste11",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 1,
+    "id": "19a74a67-1781-416f-90d4-a77f5bcb247f",
+    "date": "2026-03-09T00:54:26.498Z"
+  }
+]

@@ -1,0 +1,178 @@
+[
+  {
+    "messagePreview": "Olá bom dia {nome}, tudo bem? Quem fala é Hebert Sandinha e sou gerente de capta",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 11,
+    "id": "2f4c1db6-6618-4b5e-b356-efc5310b7ea1",
+    "date": "2026-03-09T11:47:43.803Z"
+  },
+  {
+    "messagePreview": "Olá bom dia {nome\", tudo bem? Quem fala é Hebert Sandinha e sou gerente de capta",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 10,
+    "id": "b5177a92-4385-46a3-bb57-0ad6f67ae3dc",
+    "date": "2026-03-09T11:47:22.975Z"
+  },
+  {
+    "messagePreview": "Olá, {nome}.\nseu imóvel esta disponivel para locação?",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 9,
+    "id": "9bda4eac-91e9-4c03-a4fd-c15768665222",
+    "date": "2026-03-09T11:16:46.118Z"
+  },
+  {
+    "messagePreview": "teste",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 8,
+    "id": "cb82dc0a-0adb-4552-b264-cbc5a6358d81",
+    "date": "2026-03-09T11:14:53.918Z"
+  },
+  {
+    "messagePreview": "Ola{nome}, seu imovel esta disponivel para locação?",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 7,
+    "id": "1392925f-bbfe-4104-b511-19ed1c378112",
+    "date": "2026-03-09T11:07:34.736Z"
+  },
+  {
+    "messagePreview": "Ola{nome}, seu imovel esta disponivel para locação?",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 6,
+    "id": "35bf3fc5-9ed7-47cc-a35f-35d2ab5b54d4",
+    "date": "2026-03-09T11:06:10.543Z"
+  },
+  {
+    "messagePreview": "Ola{nome}, seu imovel esta disponivel para locação?",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 5,
+    "id": "393e250d-5a39-45cc-a11c-22cdedae8727",
+    "date": "2026-03-09T11:05:29.104Z"
+  },
+  {
+    "messagePreview": "Ola{nome}, seu imovel esta disponivel para locação?",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 4,
+    "id": "24c2fb5d-f6a2-49c5-afc9-027ff247cb60",
+    "date": "2026-03-09T11:04:14.044Z"
+  },
+  {
+    "messagePreview": "Olá {nome}, seu imovel esta disponivel para locação?\n\n📋 *Opções disponíveis:*\n ",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 3,
+    "id": "53bb623b-3aac-421f-964c-6ad3785be269",
+    "date": "2026-03-09T10:47:45.140Z"
+  },
+  {
+    "messagePreview": "Olá {nome}, seu imovel esta disponivel para locação?\n\n▶ 1. Sim\n▶ 2. Não\n\n_Respon",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 2,
+    "id": "b48b5746-7ec4-4935-8eca-59df4d44f6cf",
+    "date": "2026-03-09T10:46:52.093Z"
+  },
+  {
+    "messagePreview": "teste",
+    "total": 1,
+    "sent": 1,
+    "failed": 0,
+    "results": [
+      {
+        "phone": "31984005308",
+        "nome": "Hebert Sandinha",
+        "status": "ok"
+      }
+    ],
+    "dailySent": 1,
+    "id": "a99b40b4-c0c4-4cb2-a470-f03aa9c96de4",
+    "date": "2026-03-09T00:53:38.182Z"
+  }
+]

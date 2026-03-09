@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Panel — WhatsApp Sender</title>
+    <link rel="stylesheet" href="admin.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body>
+    <!-- Loading overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <p>Verificando permissões...</p>
+    </div>
+
+    <!-- Access denied -->
+    <div id="accessDenied" class="access-denied" style="display:none">
+        <div class="denied-card">
+            <div class="denied-icon">🚫</div>
+            <h2>Acesso Negado</h2>
+            <p>Você não tem permissão para acessar o painel administrativo.</p>
+            <a href="/app" class="btn-primary">Voltar ao Dashboard</a>
+        </div>
+    </div>
+
+    <!-- Main Admin Panel -->
+    <div id="adminPanel" class="admin-panel" style="display:none">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>⚙️ Admin</h2>
+                <span class="version-badge">v5.0</span>
+            </div>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-section="overview" onclick="switchSection('overview')">
+                    <span class="nav-icon">📊</span> Visão Geral
+                </button>
+                <button class="nav-item" data-section="users" onclick="switchSection('users')">
+                    <span class="nav-icon">👥</span> Usuários
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <a href="/app" class="nav-item back-link">
+                    <span class="nav-icon">←</span> Voltar ao App
+                </a>
+                <button class="nav-item" onclick="doLogout()">
+                    <span class="nav-icon">🚪</span> Sair
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="admin-header">
+                <div class="header-left">
+                    <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+                    <h1 id="sectionTitle">Visão Geral</h1>
+                </div>
+                <div class="header-right">
+                    <span id="adminName" class="admin-name"></span>
+                    <span class="admin-badge">Admin</span>
+                </div>
+            </header>
+
+            <!-- Overview Section -->
+            <section id="section-overview" class="section active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statTotalUsers">-</span>
+                            <span class="stat-label">Total de Usuários</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🆕</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statRecentUsers">-</span>
+                            <span class="stat-label">Novos (30 dias)</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📨</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statTotalMessages">-</span>
+                            <span class="stat-label">Msgs Enviadas</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📩</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statTodayMessages">-</span>
+                            <span class="stat-label">Msgs Hoje</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📋</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statTotalCampaigns">-</span>
+                            <span class="stat-label">Total Campanhas</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="charts-row">
+                    <div class="chart-card">
+                        <h3>Distribuição por Plano</h3>
+                        <div id="planChart" class="chart-bars"></div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Distribuição por Status</h3>
+                        <div id="statusChart" class="chart-bars"></div>
+                    </div>
+                </div>
+
+                <div class="recent-section">
+                    <h3>Últimos Usuários Cadastrados</h3>
+                    <div id="recentUsersList" class="recent-list"></div>
+                </div>
+            </section>
+
+            <!-- Users Section -->
+            <section id="section-users" class="section">
+                <div class="users-toolbar">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="Buscar por nome ou email..."
+                            oninput="filterUsers()" />
+                    </div>
+                    <div class="filter-group">
+                        <select id="filterPlan" onchange="filterUsers()">
+                            <option value="">Todos os Planos</option>
+                            <option value="free">Free</option>
+                            <option value="pro">Pro</option>
+                            <option value="enterprise">Enterprise</option>
+                        </select>
+                        <select id="filterStatus" onchange="filterUsers()">
+                            <option value="">Todos os Status</option>
+                            <option value="active">Ativo</option>
+                            <option value="suspended">Suspenso</option>
+                            <option value="banned">Banido</option>
+                        </select>
+                    </div>
+                    <div class="users-count">
+                        <span id="usersCountText">0 usuários</span>
+                    </div>
+                </div>
+
+                <div class="users-table-wrapper">
+                    <table class="users-table">
+                        <thead>
+                            <tr>
+                                <th>Usuário</th>
+                                <th>Plano</th>
+                                <th>Status</th>
+                                <th>Msgs Enviadas</th>
+                                <th>Campanhas</th>
+                                <th>Último Login</th>
+                                <th>Cadastro</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr>
+                                <td colspan="8" class="loading-cell">Carregando...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- User Detail Modal -->
+    <div id="userModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeUserModal()">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2 id="modalUserName">Detalhes do Usuário</h2>
+                <button class="modal-close" onclick="closeUserModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <!-- Profile Info -->
+                <div class="detail-section">
+                    <h3>Informações do Perfil</h3>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <label>ID</label>
+                            <span id="detailId" class="detail-value mono"></span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Email</label>
+                            <span id="detailEmail" class="detail-value"></span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Nome</label>
+                            <span id="detailName" class="detail-value"></span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Provedor</label>
+                            <span id="detailProvider" class="detail-value"></span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Email Confirmado</label>
+                            <span id="detailEmailConfirmed" class="detail-value"></span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Último Login</label>
+                            <span id="detailLastLogin" class="detail-value"></span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Cadastro</label>
+                            <span id="detailCreatedAt" class="detail-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Editable Fields -->
+                <div class="detail-section">
+                    <h3>Configurações</h3>
+                    <div class="edit-grid">
+                        <div class="edit-item">
+                            <label>Plano</label>
+                            <select id="editPlan">
+                                <option value="free">Free</option>
+                                <option value="pro">Pro</option>
+                                <option value="enterprise">Enterprise</option>
+                            </select>
+                        </div>
+                        <div class="edit-item">
+                            <label>Status</label>
+                            <select id="editStatus">
+                                <option value="active">Ativo</option>
+                                <option value="suspended">Suspenso</option>
+                                <option value="banned">Banido</option>
+                            </select>
+                        </div>
+                        <div class="edit-item">
+                            <label>Limite Diário</label>
+                            <input type="number" id="editDailyLimit" min="0" max="100000" />
+                        </div>
+                        <div class="edit-item">
+                            <label>Admin</label>
+                            <select id="editIsAdmin">
+                                <option value="false">Não</option>
+                                <option value="true">Sim</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn-save" onclick="saveUserChanges()">💾 Salvar Alterações</button>
+                </div>
+
+                <!-- Usage Stats -->
+                <div class="detail-section">
+                    <h3>Estatísticas de Uso</h3>
+                    <div class="usage-stats">
+                        <div class="usage-item">
+                            <span class="usage-label">Total Mensagens</span>
+                            <span id="detailTotalMsgs" class="usage-value">0</span>
+                        </div>
+                        <div class="usage-item">
+                            <span class="usage-label">Msgs com Sucesso</span>
+                            <span id="detailSentMsgs" class="usage-value success">0</span>
+                        </div>
+                        <div class="usage-item">
+                            <span class="usage-label">Msgs Falharam</span>
+                            <span id="detailFailedMsgs" class="usage-value error">0</span>
+                        </div>
+                        <div class="usage-item">
+                            <span class="usage-label">Campanhas</span>
+                            <span id="detailCampaigns" class="usage-value">0</span>
+                        </div>
+                        <div class="usage-item">
+                            <span class="usage-label">Templates</span>
+                            <span id="detailTemplates" class="usage-value">0</span>
+                        </div>
+                        <div class="usage-item">
+                            <span class="usage-label">Agendamentos</span>
+                            <span id="detailSchedules" class="usage-value">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Daily Stats Table -->
+                <div class="detail-section">
+                    <h3>Envios Diários (Últimos 30 dias)</h3>
+                    <div class="daily-stats-mini" id="detailDailyStats"></div>
+                </div>
+
+                <!-- Recent History -->
+                <div class="detail-section">
+                    <h3>Últimas Campanhas</h3>
+                    <div id="detailHistory" class="history-list"></div>
+                </div>
+
+                <!-- Danger Zone -->
+                <div class="detail-section danger-zone">
+                    <h3>⚠️ Zona de Perigo</h3>
+                    <p>Esta ação é irreversível. Todos os dados do usuário serão apagados permanentemente.</p>
+                    <button class="btn-danger" id="btnDeleteUser" onclick="deleteUser()">🗑️ Deletar Usuário</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script src="admin.js"></script>
+</body>
+
+</html>

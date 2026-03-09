@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Sender Pro — Envio em Massa Profissional</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <link rel="stylesheet" href="login.css" />
+</head>
+
+<body>
+    <!-- ═══ Navbar ═══ -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fab fa-whatsapp"></i>
+                <span>WhatsApp Sender <strong>Pro</strong></span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Recursos</a>
+                <a href="#pricing">Planos</a>
+                <button class="nav-btn" onclick="showAuth('login')">Entrar</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ═══ Hero ═══ -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-badge"><i class="fas fa-bolt"></i> Plataforma SaaS</div>
+            <h1>Envio em massa no WhatsApp<br><span class="highlight">profissional e seguro</span></h1>
+            <p class="hero-sub">Automatize seus envios com intervalos inteligentes, variáveis personalizadas,
+                agendamento, dark mode e muito mais. Tudo em uma interface moderna.</p>
+            <div class="hero-actions">
+                <button class="btn-hero" onclick="showAuth('register')">
+                    <i class="fas fa-rocket"></i> Criar Conta Grátis
+                </button>
+                <button class="btn-hero-outline" onclick="showAuth('login')">
+                    <i class="fas fa-sign-in-alt"></i> Já tenho conta
+                </button>
+            </div>
+            <div class="hero-stats">
+                <div class="stat-item"><strong>200+</strong><span>Mensagens/dia grátis</span></div>
+                <div class="stat-item"><strong>13</strong><span>Recursos inclusos</span></div>
+                <div class="stat-item"><strong>100%</strong><span>Anti-bloqueio</span></div>
+            </div>
+        </div>
+        <div class="hero-visual">
+            <div class="mockup">
+                <div class="mockup-header">
+                    <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+                    <span class="mockup-title">WhatsApp Sender Pro</span>
+                </div>
+                <div class="mockup-body">
+                    <div class="mock-item"><i class="fas fa-qrcode"></i> Sessão conectada</div>
+                    <div class="mock-item"><i class="fas fa-users"></i> 150 contatos carregados</div>
+                    <div class="mock-item sent"><i class="fas fa-check-circle"></i> 87/150 enviados</div>
+                    <div class="mock-progress">
+                        <div class="mock-bar" style="width:58%"></div>
+                    </div>
+                    <div class="mock-log">
+                        <span class="log-g">✓ João — 31999001122</span>
+                        <span class="log-g">✓ Maria — 31998887766</span>
+                        <span class="log-y">⏳ Aguardando 12s...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══ Features ═══ -->
+    <section id="features" class="features">
+        <h2 class="section-title">Tudo que você precisa</h2>
+        <p class="section-sub">13 recursos profissionais em uma única plataforma</p>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-lock"></i></div>
+                <h3>Autenticação Segura</h3>
+                <p>Login com email/senha via Supabase. Seus dados protegidos.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-database"></i></div>
+                <h3>Crash Recovery</h3>
+                <p>Se o servidor cair, retoma do ponto exato onde parou.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-calendar-alt"></i></div>
+                <h3>Agendamento</h3>
+                <p>Programe envios para qualquer data e hora futura.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-history"></i></div>
+                <h3>Histórico Completo</h3>
+                <p>Todos os envios salvos com relatório exportável em CSV.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-file-alt"></i></div>
+                <h3>Templates</h3>
+                <p>Salve e reutilize mensagens. Nunca reescreva do zero.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-code"></i></div>
+                <h3>Variáveis Dinâmicas</h3>
+                <p>Use qualquer coluna da planilha: {nome}, {cidade}, {dados}...</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-images"></i></div>
+                <h3>Imagens com Legenda</h3>
+                <p>Envie múltiplas imagens, cada uma com legenda individual.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-file-import"></i></div>
+                <h3>3 Formas de Importar</h3>
+                <p>Excel (.xlsx), Google Sheets e colar texto direto.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-shield-alt"></i></div>
+                <h3>Anti-Bloqueio</h3>
+                <p>Limite diário + horário de trabalho + intervalos aleatórios.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-download"></i></div>
+                <h3>Exportar Relatório</h3>
+                <p>CSV com status de cada envio para análise.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-clone"></i></div>
+                <h3>Detecta Duplicados</h3>
+                <p>Aviso automático e remoção com 1 clique.</p>
+            </div>
+            <div class="feature-card">
+                <div class="fc-icon"><i class="fas fa-moon"></i></div>
+                <h3>Dark Mode</h3>
+                <p>Interface clara ou escura. Seus olhos agradecem.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══ Pricing ═══ -->
+    <section id="pricing" class="pricing">
+        <h2 class="section-title">Planos</h2>
+        <p class="section-sub">Comece grátis, escale quando precisar</p>
+        <div class="pricing-grid">
+            <div class="plan-card">
+                <div class="plan-badge">Grátis</div>
+                <div class="plan-price">R$ 0<span>/mês</span></div>
+                <ul class="plan-features">
+                    <li><i class="fas fa-check"></i> 200 mensagens/dia</li>
+                    <li><i class="fas fa-check"></i> Todos os 13 recursos</li>
+                    <li><i class="fas fa-check"></i> 1 sessão WhatsApp</li>
+                    <li><i class="fas fa-check"></i> Histórico 30 dias</li>
+                </ul>
+                <button class="btn-plan" onclick="showAuth('register')">Começar Grátis</button>
+            </div>
+            <div class="plan-card featured">
+                <div class="plan-badge">Pro</div>
+                <div class="plan-price">R$ 49<span>/mês</span></div>
+                <ul class="plan-features">
+                    <li><i class="fas fa-check"></i> 2.000 mensagens/dia</li>
+                    <li><i class="fas fa-check"></i> Todos os 13 recursos</li>
+                    <li><i class="fas fa-check"></i> Sessão prioritária</li>
+                    <li><i class="fas fa-check"></i> Histórico ilimitado</li>
+                    <li><i class="fas fa-check"></i> Suporte via WhatsApp</li>
+                </ul>
+                <button class="btn-plan featured-btn" onclick="showAuth('register')">Assinar Pro</button>
+            </div>
+            <div class="plan-card">
+                <div class="plan-badge">Enterprise</div>
+                <div class="plan-price">R$ 149<span>/mês</span></div>
+                <ul class="plan-features">
+                    <li><i class="fas fa-check"></i> Ilimitado</li>
+                    <li><i class="fas fa-check"></i> API de integração</li>
+                    <li><i class="fas fa-check"></i> Multi-sessão</li>
+                    <li><i class="fas fa-check"></i> Dashboard analytics</li>
+                    <li><i class="fas fa-check"></i> Suporte dedicado</li>
+                </ul>
+                <button class="btn-plan" onclick="showAuth('register')">Falar com Vendas</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══ Footer ═══ -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-brand">
+                <i class="fab fa-whatsapp"></i> WhatsApp Sender Pro
+            </div>
+            <p>&copy; 2026 WhatsApp Sender Pro. Todos os direitos reservados.</p>
+        </div>
+    </footer>
+
+    <!-- ═══ Auth Modal ═══ -->
+    <div id="authModal" class="auth-overlay" style="display:none;">
+        <div class="auth-card">
+            <button class="auth-close" onclick="closeAuth()">&times;</button>
+
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">Entrar</button>
+                <button class="auth-tab" id="tabRegister" onclick="switchAuthTab('register')">Criar Conta</button>
+            </div>
+
+            <!-- Login -->
+            <div id="formLogin" class="auth-form">
+                <div class="auth-icon"><i class="fab fa-whatsapp"></i></div>
+                <h2>Bem-vindo de volta!</h2>
+                <p>Entre com seu email e senha</p>
+                <div class="auth-field">
+                    <label>Email</label>
+                    <input type="email" id="loginEmail" placeholder="seu@email.com" />
+                </div>
+                <div class="auth-field">
+                    <label>Senha</label>
+                    <input type="password" id="loginPass" placeholder="Sua senha"
+                        onkeydown="if(event.key==='Enter')doLogin()" />
+                </div>
+                <button class="auth-btn" onclick="doLogin()">
+                    <i class="fas fa-sign-in-alt"></i> Entrar
+                </button>
+                <p class="auth-link">Não tem conta? <a href="#" onclick="switchAuthTab('register');return false;">Criar
+                        conta</a></p>
+                <p class="auth-link"><a href="#" onclick="doForgotPassword();return false;">Esqueci minha senha</a></p>
+                <p id="loginError" class="auth-error" style="display:none;"></p>
+            </div>
+
+            <!-- Register -->
+            <div id="formRegister" class="auth-form" style="display:none;">
+                <div class="auth-icon"><i class="fas fa-user-plus"></i></div>
+                <h2>Criar Conta</h2>
+                <p>Registre-se grátis em 30 segundos</p>
+                <div class="auth-field">
+                    <label>Nome</label>
+                    <input type="text" id="regName" placeholder="Seu nome completo" />
+                </div>
+                <div class="auth-field">
+                    <label>Email</label>
+                    <input type="email" id="regEmail" placeholder="seu@email.com" />
+                </div>
+                <div class="auth-field">
+                    <label>Senha</label>
+                    <input type="password" id="regPass" placeholder="Mínimo 6 caracteres"
+                        onkeydown="if(event.key==='Enter')doRegister()" />
+                </div>
+                <button class="auth-btn" onclick="doRegister()">
+                    <i class="fas fa-rocket"></i> Criar Conta
+                </button>
+                <p class="auth-link">Já tem conta? <a href="#" onclick="switchAuthTab('login');return false;">Entrar</a>
+                </p>
+                <p id="regError" class="auth-error" style="display:none;"></p>
+                <p id="regSuccess" class="auth-success" style="display:none;"></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="login.js?v=5.1"></script>
+</body>
+
+</html>

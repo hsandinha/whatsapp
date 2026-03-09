@@ -1,22 +1,627 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exibição de Arquivo XLSX</title>
+    <title>WhatsApp Sender Pro — Dashboard</title>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
-    <link rel="stylesheet" type="text/css" href="style.css" />
-    <script defer type="text/javascript" src="javascript.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
+
 <body>
-    <div class="logo">
-        <img src="imagens/logo_preto.png" alt="Logomarca da Empresa">
+    <!-- ═══ Login Overlay (removido — auth via Supabase na landing page) ═══ -->
+
+    <div id="appContainer" class="app">
+        <!-- ═══ Header ═══ -->
+        <header class="header">
+            <div class="header-left">
+                <img src="imagens/logo_preto.png" alt="Logo" class="logo" />
+                <h1>WhatsApp Sender <span>Pro</span></h1>
+            </div>
+            <div class="header-right">
+                <div id="sessionStatus" class="status-badge disconnected">
+                    <i class="fas fa-circle"></i><span>Desconectado</span>
+                </div>
+                <button class="icon-btn" onclick="toggleDarkMode()" title="Dark Mode">
+                    <i id="themeIcon" class="fas fa-moon"></i>
+                </button>
+                <div class="user-menu">
+                    <button class="icon-btn" onclick="toggleUserMenu()" title="Usuário" id="userMenuBtn">
+                        <i class="fas fa-user"></i>
+                    </button>
+                    <div id="userDropdown" class="user-dropdown" style="display:none;">
+                        <div class="user-info">
+                            <strong id="userName">Usuário</strong>
+                            <small id="userEmail">email@email.com</small>
+                        </div>
+                        <hr class="divider">
+                        <a href="/admin" id="adminLink" class="dropdown-item" style="display:none;">
+                            <i class="fas fa-cog"></i> Painel Admin
+                        </a>
+                        <button onclick="doLogout()" class="dropdown-item">
+                            <i class="fas fa-sign-out-alt"></i> Sair
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- ═══ Tabs ═══ -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="main" onclick="switchTab('main')">
+                <i class="fas fa-paper-plane"></i> Envio
+            </button>
+            <button class="tab" data-tab="history" onclick="switchTab('history')">
+                <i class="fas fa-history"></i> Histórico
+            </button>
+            <button class="tab" data-tab="schedules" onclick="switchTab('schedules')">
+                <i class="fas fa-calendar-alt"></i> Agendamentos
+            </button>
+            <button class="tab" data-tab="analytics" onclick="switchTab('analytics')">
+                <i class="fas fa-chart-line"></i> Relatórios
+            </button>
+        </nav>
+
+        <!-- ═══════ TAB: ENVIO (main) ═══════ -->
+        <div id="tab-main" class="tab-content active">
+            <main class="main">
+                <!-- Sidebar -->
+                <aside class="sidebar">
+                    <!-- Sessão -->
+                    <section class="card">
+                        <h2><i class="fab fa-whatsapp"></i> Sessão WhatsApp</h2>
+                        <p class="card-desc">Conecte-se ao WhatsApp Web para enviar mensagens.</p>
+                        <div id="qrContainer" class="qr-container" style="display:none;">
+                            <p class="qr-label">Escaneie o QR Code:</p>
+                            <img id="qrImage" src="" alt="QR Code" class="qr-image" />
+                        </div>
+                        <div id="loadingContainer" class="loading-container" style="display:none;">
+                            <div class="spinner"></div>
+                            <p id="loadingText">Conectando...</p>
+                        </div>
+                        <div class="btn-group">
+                            <button id="btnConnect" class="btn btn-success" onclick="startSession()">
+                                <i class="fas fa-plug"></i> Conectar
+                            </button>
+                            <button id="btnRestart" class="btn btn-warning" onclick="restartSession()"
+                                style="display:none;">
+                                <i class="fas fa-sync-alt"></i> Reconectar
+                            </button>
+                            <button id="btnDisconnect" class="btn btn-danger" onclick="closeSession()" disabled>
+                                <i class="fas fa-power-off"></i> Desconectar
+                            </button>
+                        </div>
+                        <p class="hint" style="margin-top:10px;">Sessão salva automaticamente.</p>
+                    </section>
+
+                    <!-- Intervalo -->
+                    <section class="card">
+                        <h2><i class="fas fa-clock"></i> Intervalo entre Mensagens</h2>
+                        <div class="interval-group">
+                            <div class="input-group">
+                                <label for="intervalMin">Mínimo (s)</label>
+                                <input type="number" id="intervalMin" value="5" min="1" max="300" />
+                            </div>
+                            <div class="input-group">
+                                <label for="intervalMax">Máximo (s)</label>
+                                <input type="number" id="intervalMax" value="15" min="1" max="300" />
+                            </div>
+                        </div>
+                        <p class="hint">Aleatório entre mín. e máx. para simular humano.</p>
+                    </section>
+
+                    <!-- Proteção Anti-Bloqueio -->
+                    <section class="card">
+                        <h2><i class="fas fa-shield-alt"></i> Proteção Anti-Bloqueio</h2>
+                        <div class="input-group" style="margin-bottom:12px;">
+                            <label for="dailyLimit">Limite diário (0 = sem limite)</label>
+                            <input type="number" id="dailyLimit" value="200" min="0" max="5000" />
+                        </div>
+                        <div id="dailyStatsInfo" class="daily-stats-info">
+                            <i class="fas fa-chart-bar"></i>
+                            <span>Enviadas hoje: <strong id="dailySentCount">0</strong></span>
+                        </div>
+                        <hr class="divider">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="scheduleCheck" />
+                            <label for="scheduleCheck">Horário de trabalho</label>
+                        </div>
+                        <div id="scheduleSection" class="interval-group" style="display:none;">
+                            <div class="input-group">
+                                <label for="scheduleStart">Início</label>
+                                <input type="time" id="scheduleStart" value="08:00" />
+                            </div>
+                            <div class="input-group">
+                                <label for="scheduleEnd">Fim</label>
+                                <input type="time" id="scheduleEnd" value="18:00" />
+                            </div>
+                        </div>
+                        <p class="hint">Fora do horário, pausa e retoma no dia seguinte.</p>
+                    </section>
+
+                    <!-- Imagens & Documentos -->
+                    <section class="card">
+                        <h2><i class="fas fa-paperclip"></i> Mídias & Documentos</h2>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="sendImageCheck" />
+                            <label for="sendImageCheck">Enviar mídia junto</label>
+                        </div>
+                        <div class="send-order-selector" id="sendOrderSection" style="display:none;">
+                            <label><i class="fas fa-sort"></i> Ordem de envio:</label>
+                            <div class="send-order-options">
+                                <label class="send-order-option active" onclick="setSendOrder('text_first', this)">
+                                    <input type="radio" name="sendOrder" value="text_first" checked hidden />
+                                    <i class="fas fa-font"></i>
+                                    <span>Texto primeiro</span>
+                                    <small>Texto → Mídia</small>
+                                </label>
+                                <label class="send-order-option" onclick="setSendOrder('media_first', this)">
+                                    <input type="radio" name="sendOrder" value="media_first" hidden />
+                                    <i class="fas fa-photo-video"></i>
+                                    <span>Mídia primeiro</span>
+                                    <small>Mídia → Texto</small>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="imageSection">
+                            <div class="media-type-tabs">
+                                <button class="media-tab active" onclick="switchMediaTab('images', this)">
+                                    <i class="fas fa-image"></i> Imagens
+                                </button>
+                                <button class="media-tab" onclick="switchMediaTab('documents', this)">
+                                    <i class="fas fa-file-pdf"></i> Documentos
+                                </button>
+                            </div>
+                            <div id="media-images" class="media-panel active">
+                                <div class="upload-area" id="uploadArea">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                    <p>Arraste ou clique para enviar imagens</p>
+                                    <input type="file" id="imageInput" accept="image/*" multiple hidden />
+                                </div>
+                                <div id="imagePreview" class="image-preview"></div>
+                            </div>
+                            <div id="media-documents" class="media-panel">
+                                <div class="upload-area" id="docUploadArea">
+                                    <i class="fas fa-file-upload"></i>
+                                    <p>Arraste ou clique para enviar PDF / DOC</p>
+                                    <input type="file" id="docInput"
+                                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" multiple hidden />
+                                </div>
+                                <div id="docPreview" class="doc-preview"></div>
+                            </div>
+                        </div>
+                    </section>
+                </aside>
+
+                <!-- Conteúdo -->
+                <div class="content">
+                    <!-- Mensagem -->
+                    <section class="card">
+                        <div class="card-header-row">
+                            <h2><i class="fas fa-pen"></i> Mensagem</h2>
+                            <div class="template-actions">
+                                <select id="templateSelect" onchange="loadTemplate()">
+                                    <option value="">-- Templates salvos --</option>
+                                </select>
+                                <button class="btn-icon" onclick="saveTemplate()" title="Salvar template">
+                                    <i class="fas fa-save"></i>
+                                </button>
+                                <button class="btn-icon btn-icon-danger" onclick="deleteCurrentTemplate()"
+                                    title="Excluir template">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <p class="card-desc">Use variáveis da planilha: <code>{nome}</code>, <code>{whatsapp}</code> e
+                            qualquer coluna extra.
+                            <span id="availableVars"></span>
+                        </p>
+
+                        <!-- Formatting Toolbar -->
+                        <div class="formatting-toolbar">
+                            <button type="button" class="fmt-btn" onclick="insertFormatting('bold')"
+                                title="Negrito (*texto*)">
+                                <i class="fas fa-bold"></i>
+                            </button>
+                            <button type="button" class="fmt-btn" onclick="insertFormatting('italic')"
+                                title="Itálico (_texto_)">
+                                <i class="fas fa-italic"></i>
+                            </button>
+                            <button type="button" class="fmt-btn" onclick="insertFormatting('strike')"
+                                title="Riscado (~texto~)">
+                                <i class="fas fa-strikethrough"></i>
+                            </button>
+                            <button type="button" class="fmt-btn" onclick="insertFormatting('mono')"
+                                title="Monoespaçado (```texto```)">
+                                <i class="fas fa-code"></i>
+                            </button>
+                            <span class="fmt-separator"></span>
+                            <button type="button" class="fmt-btn" onclick="insertFormatting('list')"
+                                title="Lista com bullet">
+                                <i class="fas fa-list-ul"></i>
+                            </button>
+                            <button type="button" class="fmt-btn" onclick="insertFormatting('number')"
+                                title="Lista numerada">
+                                <i class="fas fa-list-ol"></i>
+                            </button>
+                            <span class="fmt-separator"></span>
+                            <button type="button" class="fmt-btn" onclick="togglePreview()" title="Preview da mensagem"
+                                id="btnPreview">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+
+                        <textarea id="messageTemplate" rows="6"
+                            placeholder="Olá {nome}, tudo bem? 🎉&#10;&#10;Use a barra acima para formatar: *negrito*, _itálico_, ~riscado~"></textarea>
+                        <div class="char-count"><span id="charCount">0</span> caracteres</div>
+
+                        <!-- Message Preview -->
+                        <div id="messagePreview" class="message-preview" style="display:none;">
+                            <div class="preview-header">
+                                <i class="fas fa-eye"></i> Preview (1º contato)
+                                <button type="button" class="btn-icon" onclick="togglePreview()" title="Fechar preview">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            <div class="preview-bubble" id="previewBubble">
+                                <p class="preview-placeholder">Escreva uma mensagem para ver o preview...</p>
+                            </div>
+                        </div>
+
+                        <!-- Interactive Buttons/Lists toggle -->
+                        <div class="interactive-section">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="enableButtons" onchange="toggleButtonsBuilder()" />
+                                <label for="enableButtons"><i class="fas fa-th-list"></i> Adicionar botões/lista
+                                    interativa</label>
+                            </div>
+                            <div id="buttonsBuilder" class="buttons-builder" style="display:none;">
+                                <div class="builder-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <span>Botões interativos nativos do WhatsApp! Se o dispositivo não suportar, envia
+                                        como texto formatado automaticamente.</span>
+                                </div>
+                                <div class="builder-type-select">
+                                    <label>Tipo:</label>
+                                    <select id="buttonType" onchange="updateButtonsUI()">
+                                        <option value="buttons">Botões de resposta (máx. 3)</option>
+                                        <option value="list">Lista com opções</option>
+                                    </select>
+                                </div>
+
+                                <!-- Campos extras -->
+                                <div class="builder-fields">
+                                    <div class="builder-field-row">
+                                        <div class="builder-field">
+                                            <label>Rodapé (opcional):</label>
+                                            <input type="text" id="btnFooter" placeholder="Ex: Responda com uma opção"
+                                                oninput="updatePreviewContent()" />
+                                        </div>
+                                    </div>
+                                    <div id="listExtraFields" class="builder-field-row" style="display:none;">
+                                        <div class="builder-field">
+                                            <label>Texto do botão de menu:</label>
+                                            <input type="text" id="listButtonText" placeholder="Ver opções"
+                                                value="Ver opções" oninput="updatePreviewContent()" />
+                                        </div>
+                                        <div class="builder-field">
+                                            <label>Título da seção:</label>
+                                            <input type="text" id="listSectionTitle" placeholder="Opções disponíveis"
+                                                value="Opções" oninput="updatePreviewContent()" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <label class="builder-items-label">Opções:</label>
+                                <div id="buttonItems" class="button-items">
+                                    <!-- Dynamically filled -->
+                                </div>
+                                <button type="button" class="btn btn-outline btn-sm" onclick="addButtonItem()">
+                                    <i class="fas fa-plus"></i> Adicionar opção
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Contatos -->
+                    <section class="card">
+                        <h2><i class="fas fa-users"></i> Contatos</h2>
+                        <p class="card-desc">Importe contatos de Excel, CSV, Google Sheets ou cole direto.</p>
+
+                        <div class="import-tabs">
+                            <button class="import-tab active" onclick="switchImportTab('file', this)">
+                                <i class="fas fa-file-excel"></i> Arquivo
+                            </button>
+                            <button class="import-tab" onclick="switchImportTab('sheets', this)">
+                                <i class="fas fa-table"></i> Google Sheets
+                            </button>
+                            <button class="import-tab" onclick="switchImportTab('paste', this)">
+                                <i class="fas fa-paste"></i> Colar Texto
+                            </button>
+                        </div>
+
+                        <div id="import-file" class="import-panel active">
+                            <div class="file-upload-row">
+                                <label class="btn btn-outline" for="xlsxInput">
+                                    <i class="fas fa-file-excel"></i> Importar .xlsx / .csv
+                                </label>
+                                <input type="file" id="xlsxInput" accept=".xlsx,.xls,.csv" hidden />
+                                <span id="fileName" class="file-name">Nenhum arquivo</span>
+                            </div>
+                        </div>
+                        <div id="import-sheets" class="import-panel">
+                            <div class="sheets-import-row">
+                                <input type="text" id="sheetsUrl" class="sheets-input"
+                                    placeholder="Cole o link do Google Sheets..." />
+                                <button class="btn btn-outline" onclick="importGoogleSheets()">
+                                    <i class="fas fa-link"></i> Importar
+                                </button>
+                            </div>
+                            <p class="hint">A planilha precisa estar compartilhada como "Qualquer pessoa com link".</p>
+                        </div>
+                        <div id="import-paste" class="import-panel">
+                            <textarea id="pasteArea" rows="5"
+                                placeholder="Cole dados separados por vírgula ou tab:&#10;Nome, WhatsApp, Dados&#10;João, 31999001122, Rua A 123&#10;Maria, 31998887766, Apto B"></textarea>
+                            <button class="btn btn-outline" onclick="importFromPaste()" style="margin-top:8px;">
+                                <i class="fas fa-check"></i> Processar
+                            </button>
+                        </div>
+
+                        <!-- Alertas -->
+                        <div id="duplicateWarning" class="alert alert-warning" style="display:none;">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span id="duplicateCount">0</span> números duplicados encontrados.
+                            <button class="btn-link" onclick="removeDuplicates()">Remover duplicados</button>
+                        </div>
+
+                        <div id="contactsInfo" class="contacts-info" style="display:none;">
+                            <span><strong id="contactCount">0</strong> contatos carregados</span>
+                            <div class="contacts-actions">
+                                <button class="btn-small btn-small-primary" id="btnValidate"
+                                    onclick="validateWhatsAppNumbers()" title="Verificar quais números têm WhatsApp">
+                                    <i class="fas fa-search"></i> Validar WhatsApp
+                                </button>
+                                <button class="btn-small btn-small-success" onclick="toggleAllContacts(true)">
+                                    <i class="fas fa-check-double"></i> Ativar
+                                </button>
+                                <button class="btn-small btn-small-danger" onclick="toggleAllContacts(false)">
+                                    <i class="fas fa-ban"></i> Desativar
+                                </button>
+                            </div>
+                        </div>
+                        <div id="validateProgress" class="validate-progress" style="display:none;">
+                            <div class="validate-bar">
+                                <div class="validate-bar-fill" id="validateBarFill" style="width:0%"></div>
+                            </div>
+                            <span id="validateStatus">Validando...</span>
+                        </div>
+                        <div id="contactsTable" class="table-container"></div>
+                    </section>
+
+                    <!-- Ações -->
+                    <section class="card action-card">
+                        <div class="action-row">
+                            <button id="btnSend" class="btn btn-primary btn-lg" onclick="sendMessages()" disabled>
+                                <i class="fas fa-paper-plane"></i> Enviar Agora
+                            </button>
+                            <button id="btnSchedule" class="btn btn-outline btn-lg" onclick="openScheduleModal()"
+                                disabled>
+                                <i class="fas fa-calendar-plus"></i> Agendar
+                            </button>
+                            <button id="btnCancel" class="btn btn-danger btn-lg" onclick="cancelSend()"
+                                style="display:none;">
+                                <i class="fas fa-stop"></i> Cancelar
+                            </button>
+                        </div>
+                    </section>
+
+                    <!-- Progresso -->
+                    <section class="card" id="progressSection" style="display:none;">
+                        <div class="card-header-row">
+                            <h2><i class="fas fa-tasks"></i> Progresso</h2>
+                            <button class="btn-icon" onclick="exportCurrentResults()" title="Exportar resultado">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div id="progressBar" class="progress-bar" style="width:0%">0%</div>
+                        </div>
+                        <div class="progress-stats">
+                            <div class="stat"><i class="fas fa-check-circle text-success"></i> Enviados: <strong
+                                    id="statSent">0</strong></div>
+                            <div class="stat"><i class="fas fa-times-circle text-danger"></i> Erros: <strong
+                                    id="statFailed">0</strong></div>
+                            <div class="stat"><i class="fas fa-hourglass-half text-warning"></i> Restantes: <strong
+                                    id="statRemaining">0</strong></div>
+                        </div>
+                        <div id="logContainer" class="log-container"></div>
+                    </section>
+                </div>
+            </main>
+        </div>
+
+        <!-- ═══════ TAB: HISTÓRICO ═══════ -->
+        <div id="tab-history" class="tab-content">
+            <div class="content-single">
+                <section class="card">
+                    <div class="card-header-row">
+                        <h2><i class="fas fa-history"></i> Histórico de Envios</h2>
+                        <button class="btn btn-outline" onclick="loadHistory()">
+                            <i class="fas fa-sync"></i> Atualizar
+                        </button>
+                    </div>
+                    <div id="historyList" class="history-list">
+                        <p class="empty-state"><i class="fas fa-inbox"></i><br>Nenhum envio registrado ainda.</p>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- ═══════ TAB: AGENDAMENTOS ═══════ -->
+        <div id="tab-schedules" class="tab-content">
+            <div class="content-single">
+                <section class="card">
+                    <div class="card-header-row">
+                        <h2><i class="fas fa-calendar-alt"></i> Envios Agendados</h2>
+                        <button class="btn btn-outline" onclick="loadSchedules()">
+                            <i class="fas fa-sync"></i> Atualizar
+                        </button>
+                    </div>
+                    <div id="schedulesList" class="schedules-list">
+                        <p class="empty-state"><i class="fas fa-calendar-times"></i><br>Nenhum agendamento.</p>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- ═══════ TAB: RELATÓRIOS & ANALYTICS ═══════ -->
+        <div id="tab-analytics" class="tab-content">
+            <div class="analytics-container">
+                <!-- Filtro de período -->
+                <div class="analytics-toolbar">
+                    <div class="analytics-toolbar-left">
+                        <h2><i class="fas fa-chart-line"></i> Relatórios & Analytics</h2>
+                    </div>
+                    <div class="analytics-toolbar-right">
+                        <select id="analyticsPeriod" onchange="loadAnalytics()">
+                            <option value="7">Últimos 7 dias</option>
+                            <option value="30" selected>Últimos 30 dias</option>
+                            <option value="90">Últimos 90 dias</option>
+                            <option value="365">Último ano</option>
+                        </select>
+                        <div class="export-dropdown">
+                            <button class="btn btn-outline" onclick="toggleExportMenu()">
+                                <i class="fas fa-download"></i> Exportar
+                            </button>
+                            <div id="exportMenu" class="export-menu" style="display:none;">
+                                <button onclick="exportAnalytics('summary')">
+                                    <i class="fas fa-file-csv"></i> Resumo por campanha (CSV)
+                                </button>
+                                <button onclick="exportAnalytics('detailed')">
+                                    <i class="fas fa-file-excel"></i> Detalhado por mensagem (CSV)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cards de resumo -->
+                <div class="analytics-summary">
+                    <div class="summary-card summary-sent">
+                        <div class="summary-icon"><i class="fas fa-paper-plane"></i></div>
+                        <div class="summary-data">
+                            <span class="summary-value" id="analyticsTotalSent">0</span>
+                            <span class="summary-label">Enviadas</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-failed">
+                        <div class="summary-icon"><i class="fas fa-times-circle"></i></div>
+                        <div class="summary-data">
+                            <span class="summary-value" id="analyticsTotalFailed">0</span>
+                            <span class="summary-label">Falhas</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-rate">
+                        <div class="summary-icon"><i class="fas fa-percentage"></i></div>
+                        <div class="summary-data">
+                            <span class="summary-value" id="analyticsSuccessRate">0%</span>
+                            <span class="summary-label">Taxa de Sucesso</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-campaigns">
+                        <div class="summary-icon"><i class="fas fa-bullhorn"></i></div>
+                        <div class="summary-data">
+                            <span class="summary-value" id="analyticsTotalCampaigns">0</span>
+                            <span class="summary-label">Campanhas</span>
+                        </div>
+                    </div>
+                    <div class="summary-card summary-avg">
+                        <div class="summary-icon"><i class="fas fa-calculator"></i></div>
+                        <div class="summary-data">
+                            <span class="summary-value" id="analyticsAvgPerCampaign">0</span>
+                            <span class="summary-label">Média/Campanha</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gráficos -->
+                <div class="analytics-charts">
+                    <!-- Envios por dia -->
+                    <section class="card analytics-chart-card analytics-chart-wide">
+                        <div class="card-header-row">
+                            <h3><i class="fas fa-chart-bar"></i> Envios por Dia</h3>
+                            <div class="chart-view-toggle">
+                                <button class="chart-toggle active" onclick="setChartView('daily', this)">Dia</button>
+                                <button class="chart-toggle" onclick="setChartView('weekly', this)">Semana</button>
+                                <button class="chart-toggle" onclick="setChartView('monthly', this)">Mês</button>
+                            </div>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="chartTimeline"></canvas>
+                        </div>
+                    </section>
+
+                    <!-- Taxa de sucesso (donut) -->
+                    <section class="card analytics-chart-card">
+                        <h3><i class="fas fa-chart-pie"></i> Taxa de Sucesso</h3>
+                        <div class="chart-wrapper chart-wrapper-square">
+                            <canvas id="chartSuccessRate"></canvas>
+                        </div>
+                    </section>
+
+                    <!-- Horário de pico -->
+                    <section class="card analytics-chart-card">
+                        <h3><i class="fas fa-clock"></i> Horário de Envio</h3>
+                        <div class="chart-wrapper chart-wrapper-square">
+                            <canvas id="chartHourly"></canvas>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Campanhas recentes -->
+                <section class="card">
+                    <h3><i class="fas fa-list"></i> Campanhas Recentes</h3>
+                    <div id="analyticsRecentCampaigns" class="analytics-campaigns-table">
+                        <p class="empty-state"><i class="fas fa-inbox"></i><br>Nenhuma campanha no período.</p>
+                    </div>
+                </section>
+            </div>
+        </div>
     </div>
 
-    
-    <input type="file" id="input" accept=".xlsx" onchange="handleFile(event)" />
-    <button onclick="sendWhatsAppMessages()">Enviar WhatsApp</button>
-    <div id="output"></div>
+    <!-- ═══ Modal: Agendamento ═══ -->
+    <div id="scheduleModal" class="modal-overlay" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-calendar-plus"></i> Agendar Envio</h3>
+                <button class="modal-close" onclick="closeModal('scheduleModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label for="scheduleName">Nome (opcional)</label>
+                    <input type="text" id="scheduleName" placeholder="Ex: Promoção março" />
+                </div>
+                <div class="input-group">
+                    <label for="scheduleDateTime">Data e hora do envio</label>
+                    <input type="datetime-local" id="scheduleDateTime" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('scheduleModal')">Cancelar</button>
+                <button class="btn btn-primary" onclick="confirmSchedule()">
+                    <i class="fas fa-calendar-check"></i> Confirmar Agendamento
+                </button>
+            </div>
+        </div>
+    </div>
 
+    <!-- ═══ Modal: Configurações (removido — não precisa mais de senha local) ═══ -->
+
+    <script src="javascript.js"></script>
 </body>
+
 </html>

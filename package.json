@@ -1,19 +1,23 @@
 {
-  "name": "whatsapp-messages-backend",
-  "version": "1.0.0",
-  "description": "## Install dependencies ```npm install```",
+  "name": "whatsapp-sender-pro",
+  "version": "3.0.0",
+  "description": "Sistema robusto de envio de mensagens WhatsApp com sessão persistente",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "start": "node index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "body-parser": "^1.20.3",
+    "@supabase/supabase-js": "^2.98.0",
+    "dotenv": "^17.3.1",
     "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
-    "puppeteer": "^20.9.0"
+    "multer": "^1.4.5-lts.1",
+    "qrcode": "^1.5.3",
+    "uuid": "^9.0.0",
+    "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

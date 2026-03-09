@@ -1,145 +1,1789 @@
-async function sendWhatsAppMessages() {
+// ═══════════════════════════════════════════════════════════════
+// WhatsApp Sender Pro v5.0 — Frontend (Supabase Auth)
+// ═══════════════════════════════════════════════════════════════
+
+const SUPABASE_URL = "https://piigfztyhymxrcrpavwq.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaWdmenR5aHlteHJjcnBhdndxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5OTkzNzQsImV4cCI6MjA4ODU3NTM3NH0.-nxRKReeM8blNKqw5kIEIHqolxRdOx800zwsmREOq4Y";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let customers = [];
+let headers = [];
+let uploadedImages = [];
+let eventSource = null;
+let authToken = null;
+let currentUser = null;
+let jobStats = { sent: 0, failed: 0, total: 0 };
+let lastHistoryId = null;
+
+// ═══════════════════════════════════════════════════════════════
+// INICIALIZAÇÃO
+// ═══════════════════════════════════════════════════════════════
+document.addEventListener("DOMContentLoaded", async () => {
+  // Dark mode
+  if (localStorage.getItem("darkMode") === "true") {
+    document.documentElement.setAttribute("data-theme", "dark");
+    document.getElementById("themeIcon").className = "fas fa-sun";
+  }
+
+  // Supabase auth check
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    // Não logado — redireciona para landing
+    window.location.href = "/";
+    return;
+  }
+
+  authToken = session.access_token;
+  currentUser = session.user;
+
+  // Preenche info do usuário
+  updateUserInfo();
+
+  // Listener para mudança de sessão (refresh token, logout)
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_OUT" || !session) {
+      window.location.href = "/";
+      return;
+    }
+    authToken = session.access_token;
+  });
+
+  setupEventSource();
+  setupImageUpload();
+  setupDocUpload();
+  setupMessageEditor();
+  checkSessionStatus();
+  loadDailyStats();
+  loadTemplateList();
+  loadSavedCustomers();
+
+  document.getElementById("xlsxInput").addEventListener("change", handleFile);
+
+  // Show/hide send order when media checkbox changes
+  document.getElementById("sendImageCheck").addEventListener("change", (e) => {
+    document.getElementById("sendOrderSection").style.display = e.target.checked ? "block" : "none";
+  });
+  document.getElementById("scheduleCheck").addEventListener("change", (e) => {
+    document.getElementById("scheduleSection").style.display = e.target.checked ? "grid" : "none";
+  });
+
+  // Fecha dropdown ao clicar fora
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("userDropdown");
+    const btn = document.getElementById("userMenuBtn");
+    if (menu && !menu.contains(e.target) && !btn.contains(e.target)) {
+      menu.style.display = "none";
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// AUTH (Supabase)
+// ═══════════════════════════════════════════════════════════════
+async function updateUserInfo() {
+  const nameEl = document.getElementById("userName");
+  const emailEl = document.getElementById("userEmail");
+  if (currentUser) {
+    emailEl.textContent = currentUser.email || "";
+    nameEl.textContent = currentUser.user_metadata?.name || currentUser.email?.split("@")[0] || "Usuário";
+  }
+  // Tenta buscar perfil completo do backend
   try {
-    const table = document.getElementById("myTable");
-    const rows = table.getElementsByTagName("tr");
+    const res = await authFetch("/api/profile");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.profile?.name) nameEl.textContent = data.profile.name;
+    }
+  } catch { }
+  // Verifica se é admin e mostra link
+  try {
+    const adminRes = await authFetch("/api/admin/check");
+    if (adminRes.ok) {
+      const adminData = await adminRes.json();
+      const adminLink = document.getElementById("adminLink");
+      if (adminLink && adminData.isAdmin) adminLink.style.display = "flex";
+    }
+  } catch { }
+}
 
-    const customers = [];
+function toggleUserMenu() {
+  const dd = document.getElementById("userDropdown");
+  dd.style.display = dd.style.display === "none" ? "block" : "none";
+}
 
-    for (let i = 1; i < rows.length; i++) {
-      const rowData = rows[i].getElementsByTagName("td");
+async function doLogout() {
+  await sb.auth.signOut();
+  authToken = null;
+  currentUser = null;
+  window.location.href = "/";
+}
 
-      const nome = rowData[0].innerText.trim();
-      const whatsapp = rowData[1].innerText.trim();
+function authHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (authToken) h.Authorization = `Bearer ${authToken}`;
+  return h;
+}
 
-      // Ignorar linhas com campos vazios
-      if (!nome || !whatsapp) {
-        console.warn(`Linha ${i} ignorada devido a campos vazios.`);
-        continue;
+function authFetch(url, opts = {}) {
+  opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+  return fetch(url, opts);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SSE
+// ═══════════════════════════════════════════════════════════════
+function setupEventSource() {
+  if (eventSource) eventSource.close();
+  const tokenParam = authToken ? `?token=${authToken}` : "";
+  eventSource = new EventSource(`/events${tokenParam}`);
+
+  eventSource.addEventListener("session", (e) => {
+    updateSessionUI(JSON.parse(e.data));
+  });
+
+  eventSource.addEventListener("job", (e) => {
+    handleJobEvent(JSON.parse(e.data));
+  });
+
+  eventSource.onerror = () => {
+    console.warn("SSE desconectado...");
+  };
+}
+
+function handleJobEvent(data) {
+  const log = document.getElementById("logContainer");
+  const now = new Date().toLocaleTimeString("pt-BR");
+
+  switch (data.type) {
+    case "progress":
+      addLog(log, "info", `[${now}] Enviando para ${data.customer} (${data.phone}) — ${data.current}/${data.total}`);
+      break;
+    case "sent":
+      jobStats.sent++;
+      updateProgressUI();
+      updateTableStatus(data.index, "ok");
+      addLog(log, "success", `[${now}] ✅ ${data.nome} (${data.phone})`);
+      updateDailySent();
+      break;
+    case "error":
+      jobStats.failed++;
+      updateProgressUI();
+      updateTableStatus(data.index, "error", data.error);
+      addLog(log, "error", `[${now}] ❌ ${data.nome}: ${data.error}`);
+      break;
+    case "waiting":
+      addLog(log, "wait", `[${now}] ⏳ Aguardando ${(data.waitTime / 1000).toFixed(1)}s...`);
+      break;
+    case "paused_schedule":
+      addLog(log, "warn", `[${now}] ⏸️ ${data.message}`);
+      break;
+    case "paused_limit":
+      addLog(log, "warn", `[${now}] 🛡️ ${data.message}`);
+      break;
+    case "schedule_resumed":
+      addLog(log, "success", `[${now}] ▶️ ${data.message}`);
+      break;
+    case "resuming":
+      document.getElementById("progressSection").style.display = "block";
+      addLog(log, "warn", `[${now}] 📋 ${data.message}`);
+      break;
+    case "schedule_started":
+      document.getElementById("progressSection").style.display = "block";
+      addLog(log, "info", `[${now}] ⏰ Agendamento "${data.name}" iniciado (${data.total} contatos)`);
+      break;
+    case "completed":
+      lastHistoryId = data.historyId;
+      addLog(log, "success", `[${now}] 🏁 Finalizado! ✅ ${data.sent} | ❌ ${data.failed} | Total: ${data.total}`);
+      finishSending();
+      break;
+    case "cancelled":
+      addLog(log, "warn", `[${now}] 🛑 Cancelado.`);
+      finishSending();
+      break;
+  }
+}
+
+function addLog(container, type, message) {
+  const div = document.createElement("div");
+  div.className = `log-entry log-${type}`;
+  div.textContent = message;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SESSÃO
+// ═══════════════════════════════════════════════════════════════
+async function checkSessionStatus() {
+  try {
+    const res = await authFetch("/api/session/status");
+    const data = await res.json();
+    updateSessionUI({ status: data.status, qr: data.qr, phoneNumber: data.phoneNumber });
+  } catch {
+    updateSessionUI({ status: "disconnected" });
+  }
+}
+
+async function startSession() {
+  const btn = document.getElementById("btnConnect");
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Iniciando...';
+  try {
+    await authFetch("/api/session/start", { method: "POST" });
+  } catch (err) {
+    alert("Erro: " + err.message);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-plug"></i> Conectar';
+  }
+}
+
+async function restartSession() {
+  if (!confirm("Reconectar?")) return;
+  await authFetch("/api/session/restart", { method: "POST" });
+}
+
+async function closeSession() {
+  if (!confirm("Desconectar e remover sessão?")) return;
+  await authFetch("/api/session/close", { method: "POST" });
+  updateSessionUI({ status: "disconnected" });
+}
+
+function updateSessionUI(data) {
+  const badge = document.getElementById("sessionStatus");
+  const btnConnect = document.getElementById("btnConnect");
+  const btnRestart = document.getElementById("btnRestart");
+  const btnDisconnect = document.getElementById("btnDisconnect");
+  const btnSend = document.getElementById("btnSend");
+  const btnSchedule = document.getElementById("btnSchedule");
+  const qrContainer = document.getElementById("qrContainer");
+  const qrImage = document.getElementById("qrImage");
+  const loadingContainer = document.getElementById("loadingContainer");
+  const loadingText = document.getElementById("loadingText");
+
+  badge.className = "status-badge";
+  qrContainer.style.display = "none";
+  loadingContainer.style.display = "none";
+
+  const hasContacts = customers.filter((c) => c.active).length > 0;
+
+  switch (data.status) {
+    case "connected":
+      badge.classList.add("connected");
+      if (data.phoneNumber) {
+        const formatted = data.phoneNumber.replace(/(\d{2})(\d{2})(\d{4,5})(\d{4})/, "+$1 ($2) $3-$4");
+        badge.innerHTML = `<i class="fas fa-circle"></i> <span>${formatted}</span>`;
+      } else {
+        badge.innerHTML = '<i class="fas fa-circle"></i> <span>Conectado</span>';
       }
+      btnConnect.style.display = "none";
+      btnRestart.style.display = "inline-flex";
+      btnDisconnect.disabled = false;
+      btnSend.disabled = !hasContacts;
+      btnSchedule.disabled = !hasContacts;
+      break;
+    case "qr":
+      badge.classList.add("waiting");
+      badge.innerHTML = '<i class="fas fa-qrcode"></i> <span>Escaneie o QR</span>';
+      if (data.qr) {
+        qrContainer.style.display = "block";
+        qrImage.src = data.qr;
+      }
+      btnConnect.disabled = true;
+      btnConnect.innerHTML = '<i class="fas fa-qrcode"></i> Aguardando QR...';
+      btnRestart.style.display = "none";
+      btnDisconnect.disabled = false;
+      btnSend.disabled = true;
+      btnSchedule.disabled = true;
+      break;
+    case "connecting":
+    case "authenticated":
+    case "loading":
+      badge.classList.add("waiting");
+      const msg = data.percent ? `Carregando ${data.percent}%...` : "Conectando...";
+      badge.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span>${msg}</span>`;
+      loadingContainer.style.display = "flex";
+      loadingText.textContent = data.message || msg;
+      btnConnect.disabled = true;
+      btnConnect.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Conectando...';
+      btnRestart.style.display = "none";
+      btnDisconnect.disabled = false;
+      btnSend.disabled = true;
+      btnSchedule.disabled = true;
+      break;
+    default:
+      badge.classList.add("disconnected");
+      badge.innerHTML = '<i class="fas fa-circle"></i> <span>Desconectado</span>';
+      btnConnect.style.display = "inline-flex";
+      btnConnect.disabled = false;
+      btnConnect.innerHTML = '<i class="fas fa-plug"></i> Conectar';
+      btnRestart.style.display = "none";
+      btnDisconnect.disabled = true;
+      btnSend.disabled = true;
+      btnSchedule.disabled = true;
+      break;
+  }
+}
 
-      customers.push({ nome, whatsapp });
+// ═══════════════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════════════
+function switchTab(tabName) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+  document.querySelectorAll(".tab-content").forEach((t) => t.classList.remove("active"));
+  document.querySelector(`.tab[data-tab="${tabName}"]`).classList.add("active");
+  document.getElementById(`tab-${tabName}`).classList.add("active");
+
+  if (tabName === "history") loadHistory();
+  if (tabName === "schedules") loadSchedules();
+  if (tabName === "analytics") loadAnalytics();
+}
+
+function switchImportTab(name, btn) {
+  document.querySelectorAll(".import-tab").forEach((t) => t.classList.remove("active"));
+  document.querySelectorAll(".import-panel").forEach((t) => t.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById(`import-${name}`).classList.add("active");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DARK MODE
+// ═══════════════════════════════════════════════════════════════
+function toggleDarkMode() {
+  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+  if (isDark) {
+    document.documentElement.removeAttribute("data-theme");
+    document.getElementById("themeIcon").className = "fas fa-moon";
+    localStorage.setItem("darkMode", "false");
+  } else {
+    document.documentElement.setAttribute("data-theme", "dark");
+    document.getElementById("themeIcon").className = "fas fa-sun";
+    localStorage.setItem("darkMode", "true");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EDITOR DE MENSAGEM
+// ═══════════════════════════════════════════════════════════════
+function setupMessageEditor() {
+  const ta = document.getElementById("messageTemplate");
+  const counter = document.getElementById("charCount");
+  ta.addEventListener("input", () => {
+    counter.textContent = ta.value.length;
+    updatePreviewContent();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FORMATTING TOOLBAR
+// ═══════════════════════════════════════════════════════════════
+function insertFormatting(type) {
+  const ta = document.getElementById("messageTemplate");
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const selected = ta.value.substring(start, end);
+  let before = ta.value.substring(0, start);
+  let after = ta.value.substring(end);
+  let insert = "";
+
+  switch (type) {
+    case "bold":
+      insert = selected ? `*${selected}*` : "*texto*";
+      break;
+    case "italic":
+      insert = selected ? `_${selected}_` : "_texto_";
+      break;
+    case "strike":
+      insert = selected ? `~${selected}~` : "~texto~";
+      break;
+    case "mono":
+      insert = selected ? "```" + selected + "```" : "```código```";
+      break;
+    case "list":
+      if (selected) {
+        insert = selected.split("\n").map(l => `• ${l}`).join("\n");
+      } else {
+        insert = "• Item 1\n• Item 2\n• Item 3";
+      }
+      break;
+    case "number":
+      if (selected) {
+        insert = selected.split("\n").map((l, i) => `${i + 1}. ${l}`).join("\n");
+      } else {
+        insert = "1. Item 1\n2. Item 2\n3. Item 3";
+      }
+      break;
+  }
+
+  ta.value = before + insert + after;
+  ta.focus();
+  // Place cursor after inserted text
+  const cursorPos = start + insert.length;
+  ta.setSelectionRange(cursorPos, cursorPos);
+  document.getElementById("charCount").textContent = ta.value.length;
+  updatePreviewContent();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MESSAGE PREVIEW
+// ═══════════════════════════════════════════════════════════════
+let previewVisible = false;
+
+function togglePreview() {
+  previewVisible = !previewVisible;
+  const panel = document.getElementById("messagePreview");
+  const btn = document.getElementById("btnPreview");
+  panel.style.display = previewVisible ? "block" : "none";
+  if (btn) btn.classList.toggle("active", previewVisible);
+  if (previewVisible) updatePreviewContent();
+}
+
+function updatePreviewContent() {
+  if (!previewVisible) return;
+  const bubble = document.getElementById("previewBubble");
+  const msg = document.getElementById("messageTemplate").value;
+
+  if (!msg.trim()) {
+    bubble.innerHTML = '<p class="preview-placeholder">Escreva uma mensagem para ver o preview...</p>';
+    return;
+  }
+
+  // Variable substitution from first contact
+  let preview = msg;
+  if (customers.length > 0) {
+    const c = customers[0];
+    for (const key of Object.keys(c)) {
+      if (key === "active" || key === "_idx") continue;
+      preview = preview.replace(new RegExp(`\\{${key}\\}`, "gi"), c[key] || "");
     }
+  }
 
-    if (customers.length === 0) {
-      throw new Error("Nenhum cliente válido encontrado para enviar mensagens.");
-    }
+  // WhatsApp formatting to HTML
+  let html = escapeHTML(preview);
+  // Bold: *text*
+  html = html.replace(/\*(.*?)\*/g, "<b>$1</b>");
+  // Italic: _text_
+  html = html.replace(/_(.*?)_/g, "<i>$1</i>");
+  // Strikethrough: ~text~
+  html = html.replace(/~(.*?)~/g, "<s>$1</s>");
+  // Monospace: ```text```
+  html = html.replace(/```(.*?)```/gs, "<code>$1</code>");
+  // Line breaks
+  html = html.replace(/\n/g, "<br>");
 
-    // Simulação de envio de mensagens
-    await fetch("/sendMessages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ customers }),
+  let mediaHtml = "";
+
+  // Show image previews
+  if (document.getElementById("sendImageCheck").checked && uploadedImages.length > 0) {
+    mediaHtml += '<div class="preview-media">';
+    uploadedImages.forEach(img => {
+      mediaHtml += `<img src="${img.path}" class="preview-media-item" alt="${escapeHTML(img.name)}" />`;
     });
+    mediaHtml += "</div>";
+  }
 
-    // Atualizar a tabela com "OK" após o envio
-    for (let i = 1; i < rows.length; i++) {
-      const rowData = rows[i].getElementsByTagName("td");
-      const nome = rowData[0].innerText.trim();
-      const whatsapp = rowData[1].innerText.trim();
+  // Show document previews
+  if (document.getElementById("sendImageCheck").checked && uploadedDocs.length > 0) {
+    mediaHtml += '<div class="preview-media">';
+    uploadedDocs.forEach(doc => {
+      const icon = getDocIcon(doc.name);
+      mediaHtml += `<div class="preview-doc-item"><i class="fas ${icon}"></i> ${escapeHTML(doc.name)}</div>`;
+    });
+    mediaHtml += "</div>";
+  }
 
-      if (nome && whatsapp) {
-        rowData[2].innerText = "OK";
-      }
+  // Show buttons/list preview (native WhatsApp style)
+  let buttonsHtml = "";
+  const iData = getInteractiveData();
+  if (iData) {
+    if (iData.footer) {
+      buttonsHtml += `<div class="preview-footer">${escapeHTML(iData.footer)}</div>`;
     }
+    buttonsHtml += '<div class="preview-buttons-container">';
+    if (iData.type === "buttons") {
+      iData.items.slice(0, 3).forEach(item => {
+        buttonsHtml += `<div class="preview-wa-button"><i class="fas fa-reply"></i> ${escapeHTML(item)}</div>`;
+      });
+    } else {
+      buttonsHtml += `<div class="preview-wa-list-btn"><i class="fas fa-bars"></i> ${escapeHTML(iData.buttonText || "Ver opções")}</div>`;
+      buttonsHtml += '<div class="preview-wa-list-items">';
+      iData.items.forEach(item => {
+        const descIdx = iData.items.indexOf(item);
+        const desc = iData.descriptions && iData.descriptions[descIdx] ? iData.descriptions[descIdx] : "";
+        buttonsHtml += `<div class="preview-wa-list-item">
+          <div class="preview-wa-list-item-title">${escapeHTML(item)}</div>
+          ${desc ? `<div class="preview-wa-list-item-desc">${escapeHTML(desc)}</div>` : ""}
+        </div>`;
+      });
+      buttonsHtml += "</div>";
+    }
+    buttonsHtml += "</div>";
+  }
 
-    console.log("Mensagens enviadas com sucesso!");
-  } catch (error) {
-    console.error("Erro ao enviar mensagens:", error);
+  bubble.innerHTML = html + mediaHtml + buttonsHtml;
+}
+
+function escapeHTML(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INTERACTIVE BUTTONS / LISTS BUILDER
+// ═══════════════════════════════════════════════════════════════
+function toggleButtonsBuilder() {
+  const enabled = document.getElementById("enableButtons").checked;
+  const builder = document.getElementById("buttonsBuilder");
+  builder.style.display = enabled ? "block" : "none";
+  if (enabled && document.getElementById("buttonItems").children.length === 0) {
+    addButtonItem();
+    addButtonItem();
+  }
+  updateButtonsUI();
+  updatePreviewContent();
+}
+
+function updateButtonsUI() {
+  const btype = document.getElementById("buttonType").value;
+  const listFields = document.getElementById("listExtraFields");
+  if (listFields) listFields.style.display = btype === "list" ? "flex" : "none";
+
+  // Update placeholders and limit
+  const items = document.querySelectorAll("#buttonItems .button-item");
+  const maxItems = btype === "buttons" ? 3 : 10;
+  items.forEach((item, i) => {
+    const titleInput = item.querySelector(".btn-item-title");
+    if (titleInput) {
+      titleInput.placeholder = btype === "buttons" ? "Texto do botão..." : "Título da opção...";
+    }
+    const descInput = item.querySelector(".btn-item-desc");
+    if (descInput) {
+      descInput.style.display = btype === "list" ? "block" : "none";
+    }
+    // Hide items beyond the limit
+    item.style.display = i < maxItems ? "flex" : "none";
+  });
+
+  updatePreviewContent();
+}
+
+function addButtonItem() {
+  const container = document.getElementById("buttonItems");
+  const btype = document.getElementById("buttonType").value;
+  const maxItems = btype === "buttons" ? 3 : 10;
+  const idx = container.children.length;
+  if (idx >= maxItems) return alert(`Máximo de ${maxItems} opções para ${btype === "buttons" ? "botões" : "lista"}.`);
+
+  const div = document.createElement("div");
+  div.className = "button-item";
+  div.innerHTML = `
+    <span class="btn-item-num" style="font-weight:600;font-size:0.82rem;color:var(--text-secondary);min-width:22px;">${idx + 1}.</span>
+    <div class="btn-item-fields">
+      <input type="text" class="btn-item-title" placeholder="${btype === "buttons" ? "Texto do botão..." : "Título da opção..."}" oninput="updatePreviewContent()" />
+      <input type="text" class="btn-item-desc" placeholder="Descrição (opcional)..." style="display:${btype === "list" ? "block" : "none"}" oninput="updatePreviewContent()" />
+    </div>
+    <button type="button" class="btn-remove-item" onclick="removeButtonItem(this)" title="Remover">
+      <i class="fas fa-times"></i>
+    </button>
+  `;
+  container.appendChild(div);
+}
+
+function removeButtonItem(btn) {
+  btn.closest(".button-item").remove();
+  renumberButtonItems();
+  updatePreviewContent();
+}
+
+function renumberButtonItems() {
+  document.querySelectorAll("#buttonItems .button-item").forEach((item, i) => {
+    item.querySelector(".btn-item-num").textContent = `${i + 1}.`;
+  });
+}
+
+function getButtonItems() {
+  const items = [];
+  document.querySelectorAll("#buttonItems .button-item .btn-item-title").forEach(inp => {
+    const val = inp.value.trim();
+    if (val) items.push(val);
+  });
+  return items;
+}
+
+function getButtonDescriptions() {
+  const descs = [];
+  document.querySelectorAll("#buttonItems .button-item .btn-item-desc").forEach(inp => {
+    descs.push((inp.value || "").trim());
+  });
+  return descs;
+}
+
+function getInteractiveData() {
+  if (!document.getElementById("enableButtons") || !document.getElementById("enableButtons").checked) return null;
+  const items = getButtonItems();
+  if (items.length === 0) return null;
+
+  const btype = document.getElementById("buttonType").value;
+  const footer = (document.getElementById("btnFooter").value || "").trim();
+
+  const data = {
+    enabled: true,
+    type: btype,
+    items,
+    footer: footer || "Responda com o número da opção",
+  };
+
+  if (btype === "list") {
+    data.descriptions = getButtonDescriptions();
+    data.buttonText = (document.getElementById("listButtonText").value || "").trim() || "Ver opções";
+    data.sectionTitle = (document.getElementById("listSectionTitle").value || "").trim() || "Opções";
+  }
+
+  return data;
+}
+
+// Legacy compatibility — no longer appends text, interactive is handled natively
+function getButtonsText() {
+  return "";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MEDIA TABS (Images / Documents)
+// ═══════════════════════════════════════════════════════════════
+let uploadedDocs = [];
+
+// ═══════════════════════════════════════════════════════════════
+// SEND ORDER SELECTOR\n// ═══════════════════════════════════════════════════════════════
+function setSendOrder(order, el) {
+  document.querySelectorAll(".send-order-option").forEach(o => o.classList.remove("active"));
+  el.classList.add("active");
+  el.querySelector("input").checked = true;
+  updatePreviewContent();
+}
+
+function getSendOrder() {
+  const checked = document.querySelector('input[name=\"sendOrder\"]:checked');
+  return checked ? checked.value : "text_first";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MEDIA TABS (Images / Documents)
+// ═══════════════════════════════════════════════════════════════
+
+function switchMediaTab(tab, btn) {
+  document.querySelectorAll(".media-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".media-panel").forEach(p => p.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById(`media-${tab}`).classList.add("active");
+}
+
+function setupDocUpload() {
+  const area = document.getElementById("docUploadArea");
+  const input = document.getElementById("docInput");
+  if (!area || !input) return;
+  area.addEventListener("click", () => input.click());
+  area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("drag-over"); });
+  area.addEventListener("dragleave", () => area.classList.remove("drag-over"));
+  area.addEventListener("drop", (e) => {
+    e.preventDefault();
+    area.classList.remove("drag-over");
+    if (e.dataTransfer.files.length > 0) uploadDocs(e.dataTransfer.files);
+  });
+  input.addEventListener("change", () => {
+    if (input.files.length > 0) { uploadDocs(input.files); input.value = ""; }
+  });
+}
+
+async function uploadDocs(files) {
+  const fd = new FormData();
+  for (const f of files) fd.append("images", f); // uses same multer field name
+  try {
+    const res = await fetch("/api/images/upload", {
+      method: "POST",
+      body: fd,
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    const data = await res.json();
+    if (data.success) {
+      uploadedDocs.push(...data.files);
+      renderDocPreview();
+      updatePreviewContent();
+    }
+  } catch (err) {
+    alert("Erro ao enviar documento: " + err.message);
   }
 }
 
-function handleFile(event) {
+function renderDocPreview() {
+  const container = document.getElementById("docPreview");
+  if (!container) return;
+  container.innerHTML = "";
+  uploadedDocs.forEach((doc, i) => {
+    const ext = doc.name.split(".").pop().toLowerCase();
+    const iconClass = getDocIcon(doc.name);
+    const colorClass = getDocColorClass(ext);
+    const div = document.createElement("div");
+    div.className = "doc-item";
+    div.innerHTML = `
+      <div class="doc-item-icon ${colorClass}"><i class="fas ${iconClass}"></i></div>
+      <div class="doc-item-info">
+        <div class="doc-item-name">${doc.name}</div>
+        <div class="doc-item-size">${ext.toUpperCase()}</div>
+      </div>
+      <button class="btn-remove-item" onclick="removeDoc(${i})" title="Remover">
+        <i class="fas fa-times"></i>
+      </button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function getDocIcon(name) {
+  const ext = name.split(".").pop().toLowerCase();
+  if (ext === "pdf") return "fa-file-pdf";
+  if (["doc", "docx"].includes(ext)) return "fa-file-word";
+  if (["xls", "xlsx"].includes(ext)) return "fa-file-excel";
+  if (["ppt", "pptx"].includes(ext)) return "fa-file-powerpoint";
+  if (ext === "txt") return "fa-file-alt";
+  if (ext === "zip") return "fa-file-archive";
+  return "fa-file";
+}
+
+function getDocColorClass(ext) {
+  if (ext === "pdf") return "pdf";
+  if (["doc", "docx"].includes(ext)) return "doc";
+  if (["xls", "xlsx"].includes(ext)) return "xls";
+  return "other";
+}
+
+async function removeDoc(index) {
+  const doc = uploadedDocs[index];
+  try { await authFetch(`/api/images/${doc.id}`, { method: "DELETE" }); } catch { }
+  uploadedDocs.splice(index, 1);
+  renderDocPreview();
+  updatePreviewContent();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TEMPLATES
+// ═══════════════════════════════════════════════════════════════
+async function loadTemplateList() {
   try {
-    const file = event.target.files[0];
-    if (!file) {
-      throw new Error("Nenhum arquivo selecionado.");
+    const res = await authFetch("/api/templates");
+    const data = await res.json();
+    const sel = document.getElementById("templateSelect");
+    sel.innerHTML = '<option value="">-- Templates salvos --</option>';
+    (data.templates || []).forEach((t) => {
+      sel.innerHTML += `<option value="${t.id}" data-msg="${encodeURIComponent(t.message)}">${t.name}</option>`;
+    });
+  } catch { }
+}
+
+function loadTemplate() {
+  const sel = document.getElementById("templateSelect");
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt.value) return;
+  document.getElementById("messageTemplate").value = decodeURIComponent(opt.dataset.msg || "");
+  document.getElementById("charCount").textContent = document.getElementById("messageTemplate").value.length;
+}
+
+async function saveTemplate() {
+  const msg = document.getElementById("messageTemplate").value.trim();
+  if (!msg) return alert("Escreva uma mensagem antes de salvar.");
+  const name = prompt("Nome do template:");
+  if (!name) return;
+
+  const sel = document.getElementById("templateSelect");
+  const selectedId = sel.value || undefined;
+
+  await authFetch("/api/templates", {
+    method: "POST",
+    body: JSON.stringify({ name, message: msg, id: selectedId }),
+  });
+  await loadTemplateList();
+}
+
+async function deleteCurrentTemplate() {
+  const sel = document.getElementById("templateSelect");
+  if (!sel.value) return alert("Selecione um template primeiro.");
+  if (!confirm("Excluir este template?")) return;
+  await authFetch(`/api/templates/${sel.value}`, { method: "DELETE" });
+  await loadTemplateList();
+  document.getElementById("messageTemplate").value = "";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UPLOAD DE IMAGENS
+// ═══════════════════════════════════════════════════════════════
+function setupImageUpload() {
+  const area = document.getElementById("uploadArea");
+  const input = document.getElementById("imageInput");
+  area.addEventListener("click", () => input.click());
+  area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("drag-over"); });
+  area.addEventListener("dragleave", () => area.classList.remove("drag-over"));
+  area.addEventListener("drop", (e) => {
+    e.preventDefault();
+    area.classList.remove("drag-over");
+    if (e.dataTransfer.files.length > 0) uploadImages(e.dataTransfer.files);
+  });
+  input.addEventListener("change", () => {
+    if (input.files.length > 0) { uploadImages(input.files); input.value = ""; }
+  });
+}
+
+async function uploadImages(files) {
+  const fd = new FormData();
+  for (const f of files) fd.append("images", f);
+  try {
+    const res = await fetch("/api/images/upload", {
+      method: "POST",
+      body: fd,
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    const data = await res.json();
+    if (data.success) {
+      uploadedImages.push(...data.files);
+      renderImagePreview();
     }
-
-    const reader = new FileReader();
-    reader.onload = function (e) {
-      try {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: "array" });
-
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        // Criar cabeçalho da tabela
-        let html = '<table id="myTable"><thead><tr><th>Nome</th><th>WhatsApp</th><th>Status</th></tr></thead><tbody>';
-        for (let i = 0; i < jsonData.length; i++) {
-          // Verificar se a linha está completamente vazia
-          if (jsonData[i].every(cell => !cell)) {
-            console.warn(`Linha ${i + 1} ignorada por estar vazia.`);
-            continue;
-          }
-
-          html += "<tr>";
-          for (let j = 0; j < jsonData[i].length; j++) {
-            html += "<td>" + (jsonData[i][j] || "") + "</td>";
-          }
-          html += "<td></td>"; // Coluna para o status
-          html += "</tr>";
-        }
-        html += "</tbody></table>";
-
-        document.getElementById("output").innerHTML = html;
-      } catch (error) {
-        console.error("Erro ao processar o arquivo Excel:", error);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  } catch (error) {
-    console.error("Erro ao ler o arquivo:", error);
+  } catch (err) {
+    alert("Erro: " + err.message);
   }
 }
 
-function handleFile(event) {
-  try {
-    const file = event.target.files[0];
-    if (!file) {
-      throw new Error("Nenhum arquivo selecionado.");
-    }
+function renderImagePreview() {
+  const container = document.getElementById("imagePreview");
+  container.innerHTML = "";
+  uploadedImages.forEach((img, i) => {
+    const div = document.createElement("div");
+    div.className = "image-item";
+    div.innerHTML = `
+      <img src="${img.path}" alt="${img.name}" />
+      <button class="btn-remove" onclick="removeImage(${i})" title="Remover"><i class="fas fa-times"></i></button>
+      <input type="text" class="caption-input" placeholder="Legenda..." value="${img.caption || ""}"
+        onchange="updateCaption(${i}, this.value)" />
+    `;
+    container.appendChild(div);
+  });
+}
 
+function updateCaption(index, value) {
+  uploadedImages[index].caption = value;
+}
+
+async function removeImage(index) {
+  const img = uploadedImages[index];
+  try { await authFetch(`/api/images/${img.id}`, { method: "DELETE" }); } catch { }
+  uploadedImages.splice(index, 1);
+  renderImagePreview();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// IMPORTAÇÃO DE CONTATOS
+// ═══════════════════════════════════════════════════════════════
+function handleFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  document.getElementById("fileName").textContent = file.name;
+
+  if (file.name.endsWith(".csv")) {
     const reader = new FileReader();
-    reader.onload = function (e) {
+    reader.onload = (e) => {
+      const rows = parseCSVText(e.target.result);
+      processImportedData(rows);
+    };
+    reader.readAsText(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: "array" });
-
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        // Criar cabeçalho da tabela
-        let html = '<table id="myTable"><thead><tr><th>Nome</th><th>WhatsApp</th><th>Status</th></tr></thead><tbody>';
-        for (let i = 0; i < jsonData.length; i++) {
-          // Verificar se a linha está completamente vazia
-          if (jsonData[i].every(cell => !cell)) {
-            console.warn(`Linha ${i + 1} ignorada por estar vazia.`);
-            continue;
-          }
-
-          html += "<tr>";
-          for (let j = 0; j < jsonData[i].length; j++) {
-            html += "<td>" + (jsonData[i][j] || "") + "</td>";
-          }
-          html += "<td></td>"; // Coluna para o status
-          html += "</tr>";
-        }
-        html += "</tbody></table>";
-
-        document.getElementById("output").innerHTML = html;
-      } catch (error) {
-        console.error("Erro ao processar o arquivo Excel:", error);
+        const wb = XLSX.read(data, { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+        processImportedData(rows);
+      } catch (err) {
+        alert("Erro: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
-  } catch (error) {
-    console.error("Erro ao ler o arquivo:", error);
   }
+}
+
+async function importGoogleSheets() {
+  const url = document.getElementById("sheetsUrl").value.trim();
+  if (!url) return alert("Cole o link do Google Sheets.");
+  const btn = event.target.closest("button");
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Importando...';
+  try {
+    const res = await authFetch("/api/import/sheets", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!data.success) { alert("Erro: " + data.error); return; }
+    processImportedData(data.data);
+  } catch (err) {
+    alert("Erro: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-link"></i> Importar';
+  }
+}
+
+function importFromPaste() {
+  const text = document.getElementById("pasteArea").value.trim();
+  if (!text) return alert("Cole os dados no campo acima.");
+  const rows = parseCSVText(text);
+  processImportedData(rows);
+}
+
+function parseCSVText(text) {
+  const lines = text.split("\n").filter((l) => l.trim());
+  return lines.map((line) => {
+    // Tenta tab primeiro, depois vírgula, depois ponto-e-vírgula
+    if (line.includes("\t")) return line.split("\t").map((c) => c.trim());
+    if (line.includes(";")) return line.split(";").map((c) => c.trim());
+    // CSV com vírgula (respeitar aspas)
+    const row = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === "," && !inQ) { row.push(cur.trim()); cur = ""; }
+      else { cur += ch; }
+    }
+    row.push(cur.trim());
+    return row;
+  });
+}
+
+function processImportedData(rows) {
+  if (!rows || rows.length === 0) return alert("Nenhum dado encontrado.");
+
+  // Detectar cabeçalho
+  headers = [];
+  let startIdx = 0;
+  const firstRow = (rows[0] || []).map((c) => (c || "").toString().trim());
+  const headerKeywords = ["nome", "name", "whatsapp", "telefone", "phone", "cel", "dados", "data", "endereco", "endereço"];
+  if (firstRow.some((h) => headerKeywords.includes(h.toLowerCase()))) {
+    headers = firstRow;
+    startIdx = 1;
+  } else {
+    // Gera headers padrão
+    headers = ["nome", "whatsapp"];
+    for (let i = 2; i < (rows[0] || []).length; i++) headers.push(`col${i + 1}`);
+  }
+
+  // Normaliza headers
+  headers = headers.map((h) => h.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_àáãâéêíóôõúç]/gi, ""));
+  if (headers.length < 2) {
+    headers = ["nome", "whatsapp"];
+  }
+
+  // Mostra variáveis disponíveis
+  const varsEl = document.getElementById("availableVars");
+  const extraVars = headers.filter((h) => h !== "nome" && h !== "whatsapp");
+  if (extraVars.length > 0) {
+    varsEl.innerHTML = "<br>Extras disponíveis: " + extraVars.map((v) => `<code>{${v}}</code>`).join(", ");
+  } else {
+    varsEl.innerHTML = "";
+  }
+
+  // Parse contatos
+  customers = [];
+  for (let i = startIdx; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => !c)) continue;
+    const entry = { active: true };
+    headers.forEach((h, idx) => {
+      entry[h] = (row[idx] || "").toString().trim();
+    });
+    // Precisa ter pelo menos nome e whatsapp
+    if (!entry[headers[0]] || !entry[headers[1]]) continue;
+    // Mapeia para nome/whatsapp se headers são diferentes
+    if (!entry.nome) entry.nome = entry[headers[0]];
+    if (!entry.whatsapp) entry.whatsapp = entry[headers[1]];
+    customers.push(entry);
+  }
+
+  renderContactsTable();
+  checkDuplicates();
+  checkSessionStatus();
+  // Salva contatos no servidor para persistir
+  saveCustomersToServer();
+}
+
+// ─── Persistência de contatos ────────────────────────
+async function saveCustomersToServer() {
+  try {
+    await authFetch("/api/customers", {
+      method: "POST",
+      body: JSON.stringify({ headers, customers }),
+    });
+  } catch (err) {
+    console.warn("Erro ao salvar contatos:", err.message);
+  }
+}
+
+async function loadSavedCustomers() {
+  try {
+    const res = await authFetch("/api/customers");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.success && data.customers && data.customers.length > 0) {
+      headers = data.headers || [];
+      customers = data.customers || [];
+      renderContactsTable();
+      checkDuplicates();
+      checkSessionStatus();
+      console.log(`📋 ${customers.length} contatos carregados do servidor`);
+    }
+  } catch (err) {
+    console.warn("Erro ao carregar contatos:", err.message);
+  }
+}
+
+function renderContactsTable() {
+  const extraCols = headers.filter((h) => h !== "nome" && h !== "whatsapp");
+  let html = '<table class="data-table"><thead><tr><th>#</th><th>Nome</th><th>WhatsApp</th>';
+  extraCols.forEach((c) => (html += `<th>${c}</th>`));
+  html += '<th>Ativo</th><th>Status</th></tr></thead><tbody>';
+
+  customers.forEach((c, i) => {
+    const extraTds = extraCols.map((col) => `<td class="dados-cell" title="${c[col] || ""}">${c[col] || ""}</td>`).join("");
+    let statusBadge;
+    if (c._validated === true) {
+      statusBadge = '<span class="badge badge-valid">✅ Válido</span>';
+    } else if (c._validated === false) {
+      statusBadge = '<span class="badge badge-no-whatsapp">⚠ Sem WhatsApp</span>';
+    } else if (c._status) {
+      statusBadge = `<span class="badge badge-${c._status === 'ok' ? 'success' : c._status === 'error' ? 'error' : 'pending'}">${c._statusText || 'Pendente'}</span>`;
+    } else {
+      statusBadge = '<span class="badge badge-pending">Pendente</span>';
+    }
+    html += `<tr data-index="${i}" class="${c.active ? "" : "row-inactive"}">
+      <td>${i + 1}</td>
+      <td>${c.nome}</td>
+      <td>${c.whatsapp}</td>
+      ${extraTds}
+      <td class="toggle-cell"><label class="toggle"><input type="checkbox" ${c.active ? "checked" : ""} onchange="toggleContact(${i})" /><span class="toggle-slider"></span></label></td>
+      <td class="status-cell">${statusBadge}</td>
+    </tr>`;
+  });
+
+  html += "</tbody></table>";
+  document.getElementById("contactsTable").innerHTML = html;
+  document.getElementById("contactsInfo").style.display = customers.length > 0 ? "flex" : "none";
+  updateContactCount();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DUPLICADOS
+// ═══════════════════════════════════════════════════════════════
+function checkDuplicates() {
+  const phones = {};
+  let dupes = 0;
+  customers.forEach((c) => {
+    const num = c.whatsapp.replace(/\D/g, "");
+    phones[num] = (phones[num] || 0) + 1;
+    if (phones[num] === 2) dupes++; // conta cada duplicata uma vez
+  });
+  const el = document.getElementById("duplicateWarning");
+  if (dupes > 0) {
+    document.getElementById("duplicateCount").textContent = dupes;
+    el.style.display = "flex";
+  } else {
+    el.style.display = "none";
+  }
+}
+
+function removeDuplicates() {
+  const seen = new Set();
+  customers = customers.filter((c) => {
+    const num = c.whatsapp.replace(/\D/g, "");
+    if (seen.has(num)) return false;
+    seen.add(num);
+    return true;
+  });
+  renderContactsTable();
+  checkDuplicates();
+  saveCustomersToServer();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VALIDAÇÃO DE WHATSAPP EM MASSA
+// ═══════════════════════════════════════════════════════════════
+async function validateWhatsAppNumbers() {
+  if (customers.length === 0) return alert("Nenhum contato para validar.");
+
+  const btn = document.getElementById("btnValidate");
+  const progressEl = document.getElementById("validateProgress");
+  const barFill = document.getElementById("validateBarFill");
+  const statusEl = document.getElementById("validateStatus");
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validando...';
+  progressEl.style.display = "flex";
+
+  const phones = customers.map((c) => c.whatsapp);
+  let validated = 0;
+  let noWhatsApp = 0;
+
+  // Validar em lotes de 10 para dar feedback em tempo real
+  const batchSize = 10;
+  for (let i = 0; i < phones.length; i += batchSize) {
+    const batch = phones.slice(i, i + batchSize);
+
+    try {
+      const res = await authFetch("/api/validate-numbers", {
+        method: "POST",
+        body: JSON.stringify({ phones: batch }),
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        alert("Erro: " + data.error);
+        break;
+      }
+
+      // Atualizar status dos contatos
+      data.results.forEach((result, batchIdx) => {
+        const globalIdx = i + batchIdx;
+        if (globalIdx < customers.length) {
+          customers[globalIdx]._validated = result.registered;
+          if (!result.registered) {
+            customers[globalIdx].active = false;
+            noWhatsApp++;
+          }
+        }
+      });
+    } catch (err) {
+      console.error("Erro na validação:", err);
+      // Marcar batch como não validado em caso de erro
+      for (let j = i; j < Math.min(i + batchSize, customers.length); j++) {
+        if (customers[j]._validated === undefined) {
+          customers[j]._validated = undefined; // mantém como não validado
+        }
+      }
+    }
+
+    validated += batch.length;
+    const pct = Math.min(100, Math.round((validated / phones.length) * 100));
+    barFill.style.width = pct + "%";
+    statusEl.textContent = `${validated}/${phones.length} verificados (${noWhatsApp} sem WhatsApp)`;
+
+    // Atualizar tabela a cada lote
+    renderContactsTable();
+  }
+
+  // Finalizar
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fas fa-search"></i> Validar WhatsApp';
+
+  const withWA = customers.filter((c) => c._validated === true).length;
+  statusEl.textContent = `✅ Concluído! ${withWA} com WhatsApp, ${noWhatsApp} sem WhatsApp`;
+
+  // Salva estado da validação
+  saveCustomersToServer();
+
+  // Esconde a barra depois de 8 segundos
+  setTimeout(() => {
+    progressEl.style.display = "none";
+    barFill.style.width = "0%";
+  }, 8000);
+
+  updateContactCount();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TOGGLE CONTATOS
+// ═══════════════════════════════════════════════════════════════
+function toggleContact(index) {
+  customers[index].active = !customers[index].active;
+  const row = document.querySelector(`tr[data-index="${index}"]`);
+  if (row) row.classList.toggle("row-inactive", !customers[index].active);
+  updateContactCount();
+  saveCustomersToServer();
+}
+
+function toggleAllContacts(checked) {
+  customers.forEach((c, i) => {
+    c.active = checked;
+    const row = document.querySelector(`tr[data-index="${i}"]`);
+    if (row) {
+      row.classList.toggle("row-inactive", !checked);
+      const cb = row.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = checked;
+    }
+  });
+  updateContactCount();
+  saveCustomersToServer();
+}
+
+function updateContactCount() {
+  const active = customers.filter((c) => c.active).length;
+  document.getElementById("contactCount").textContent = `${active} de ${customers.length}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENVIAR MENSAGENS
+// ═══════════════════════════════════════════════════════════════
+async function sendMessages() {
+  const activeCustomers = customers
+    .map((c, i) => ({ ...c, _idx: i }))
+    .filter((c) => c.active);
+  if (activeCustomers.length === 0) return alert("Nenhum contato ativo.");
+
+  const messageTemplate = document.getElementById("messageTemplate").value.trim();
+  if (!messageTemplate) return alert("Escreva uma mensagem.");
+
+  const intervalMin = parseInt(document.getElementById("intervalMin").value) * 1000;
+  const intervalMax = parseInt(document.getElementById("intervalMax").value) * 1000;
+  if (intervalMin > intervalMax) return alert("Intervalo mínimo > máximo.");
+
+  const sendImage = document.getElementById("sendImageCheck").checked;
+  if (sendImage && uploadedImages.length === 0 && uploadedDocs.length === 0) return alert("Nenhuma mídia carregada.");
+
+  const dailyLimit = parseInt(document.getElementById("dailyLimit").value) || 0;
+  const useSchedule = document.getElementById("scheduleCheck").checked;
+  const scheduleStart = document.getElementById("scheduleStart").value;
+  const scheduleEnd = document.getElementById("scheduleEnd").value;
+
+  // Get interactive buttons/list data
+  const interactiveData = getInteractiveData();
+  const sendOrder = sendImage ? getSendOrder() : "text_first";
+
+  if (!confirm(`Enviar para ${activeCustomers.length} contatos ativos?`)) return;
+
+  // Reset UI
+  jobStats = { sent: 0, failed: 0, total: activeCustomers.length };
+  lastHistoryId = null;
+  document.getElementById("progressSection").style.display = "block";
+  document.getElementById("logContainer").innerHTML = "";
+  document.getElementById("btnSend").style.display = "none";
+  document.getElementById("btnSchedule").style.display = "none";
+  document.getElementById("btnCancel").style.display = "inline-flex";
+  updateProgressUI();
+
+  document.querySelectorAll(".status-cell").forEach((cell) => {
+    cell.innerHTML = '<span class="badge badge-pending">Pendente</span>';
+  });
+
+  try {
+    const res = await authFetch("/api/send", {
+      method: "POST",
+      body: JSON.stringify({
+        customers: activeCustomers,
+        messageTemplate,
+        images: uploadedImages,
+        documents: uploadedDocs,
+        interactiveData,
+        sendOrder,
+        intervalMin,
+        intervalMax,
+        sendImage,
+        dailyLimit,
+        useSchedule,
+        scheduleStart,
+        scheduleEnd,
+      }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      alert("Erro: " + data.error);
+      finishSending();
+    }
+  } catch (err) {
+    alert("Erro: " + err.message);
+    finishSending();
+  }
+}
+
+async function cancelSend() {
+  if (!confirm("Cancelar o envio?")) return;
+  await authFetch("/api/send/cancel", { method: "POST" });
+}
+
+function finishSending() {
+  document.getElementById("btnSend").style.display = "inline-flex";
+  document.getElementById("btnSchedule").style.display = "inline-flex";
+  document.getElementById("btnCancel").style.display = "none";
+}
+
+function updateProgressUI() {
+  const done = jobStats.sent + jobStats.failed;
+  const pct = jobStats.total > 0 ? Math.round((done / jobStats.total) * 100) : 0;
+  const bar = document.getElementById("progressBar");
+  bar.style.width = pct + "%";
+  bar.textContent = pct + "%";
+  document.getElementById("statSent").textContent = jobStats.sent;
+  document.getElementById("statFailed").textContent = jobStats.failed;
+  document.getElementById("statRemaining").textContent = jobStats.total - done;
+}
+
+function updateTableStatus(index, status, error) {
+  const row = document.querySelector(`tr[data-index="${index}"]`);
+  if (!row) return;
+  const cell = row.querySelector(".status-cell");
+  if (status === "ok") {
+    cell.innerHTML = '<span class="badge badge-success">Enviado ✅</span>';
+  } else {
+    cell.innerHTML = `<span class="badge badge-error" title="${error || ""}">Erro ❌</span>`;
+  }
+}
+
+function exportCurrentResults() {
+  if (lastHistoryId) {
+    window.open(`/api/history/${lastHistoryId}/export?token=${authToken || ""}`, "_blank");
+  } else {
+    alert("Aguarde o envio finalizar para exportar.");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DAILY STATS
+// ═══════════════════════════════════════════════════════════════
+async function loadDailyStats() {
+  try {
+    const res = await authFetch("/api/daily-stats");
+    const data = await res.json();
+    document.getElementById("dailySentCount").textContent = data.sent || 0;
+    document.getElementById("dailyLimit").value = data.limit || 200;
+  } catch { }
+}
+
+function updateDailySent() {
+  const el = document.getElementById("dailySentCount");
+  el.textContent = parseInt(el.textContent || 0) + 1;
+}
+
+function updateDailySent() {
+  const el = document.getElementById("dailySentCount");
+  el.textContent = parseInt(el.textContent || 0) + 1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ANALYTICS / RELATÓRIOS
+// ═══════════════════════════════════════════════════════════════
+let chartTimeline = null;
+let chartSuccessRate = null;
+let chartHourly = null;
+let analyticsData = null;
+let currentChartView = "daily";
+
+async function loadAnalytics() {
+  const period = document.getElementById("analyticsPeriod")?.value || "30";
+  try {
+    const res = await authFetch(`/api/analytics?period=${period}`);
+    const data = await res.json();
+    if (!data.success) return;
+    analyticsData = data;
+    renderAnalyticsSummary(data.summary);
+    renderTimelineChart(data);
+    renderSuccessRateChart(data.summary);
+    renderHourlyChart(data.hourly);
+    renderRecentCampaigns(data.recentCampaigns);
+  } catch (err) {
+    console.error("Erro ao carregar analytics:", err);
+  }
+}
+
+function renderAnalyticsSummary(summary) {
+  document.getElementById("analyticsTotalSent").textContent = summary.totalSent.toLocaleString("pt-BR");
+  document.getElementById("analyticsTotalFailed").textContent = summary.totalFailed.toLocaleString("pt-BR");
+  document.getElementById("analyticsSuccessRate").textContent = summary.successRate + "%";
+  document.getElementById("analyticsTotalCampaigns").textContent = summary.totalCampaigns;
+  document.getElementById("analyticsAvgPerCampaign").textContent = summary.avgPerCampaign;
+}
+
+function renderTimelineChart(data) {
+  const ctx = document.getElementById("chartTimeline");
+  if (!ctx) return;
+
+  if (chartTimeline) chartTimeline.destroy();
+
+  let labels, sentData, failedData;
+
+  if (currentChartView === "daily") {
+    labels = data.daily.map((d) => {
+      const dt = new Date(d.date + "T12:00:00");
+      return dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+    });
+    sentData = data.daily.map((d) => d.sent);
+    failedData = data.daily.map((d) => d.failed);
+  } else if (currentChartView === "weekly") {
+    labels = data.weekly.map((w) => w.week);
+    sentData = data.weekly.map((w) => w.sent);
+    failedData = data.weekly.map((w) => w.failed);
+  } else {
+    const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    labels = data.monthly.map((m) => {
+      const [y, mo] = m.month.split("-");
+      return `${monthNames[parseInt(mo) - 1]}/${y.slice(2)}`;
+    });
+    sentData = data.monthly.map((m) => m.sent);
+    failedData = data.monthly.map((m) => m.failed);
+  }
+
+  chartTimeline = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Enviadas",
+          data: sentData,
+          backgroundColor: "rgba(37, 211, 102, 0.7)",
+          borderColor: "#25d366",
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+        {
+          label: "Falhas",
+          data: failedData,
+          backgroundColor: "rgba(239, 68, 68, 0.7)",
+          borderColor: "#ef4444",
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "top", labels: { usePointStyle: true, padding: 15 } },
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const total = items.reduce((s, i) => s + i.raw, 0);
+              return `Total: ${total}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+      },
+    },
+  });
+}
+
+function renderSuccessRateChart(summary) {
+  const ctx = document.getElementById("chartSuccessRate");
+  if (!ctx) return;
+
+  if (chartSuccessRate) chartSuccessRate.destroy();
+
+  chartSuccessRate = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Enviadas", "Falhas"],
+      datasets: [
+        {
+          data: [summary.totalSent, summary.totalFailed],
+          backgroundColor: ["rgba(37, 211, 102, 0.8)", "rgba(239, 68, 68, 0.8)"],
+          borderColor: ["#25d366", "#ef4444"],
+          borderWidth: 2,
+          hoverOffset: 8,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "65%",
+      plugins: {
+        legend: { position: "bottom", labels: { usePointStyle: true, padding: 12 } },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const total = item.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? Math.round((item.raw / total) * 100) : 0;
+              return ` ${item.label}: ${item.raw.toLocaleString("pt-BR")} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+    plugins: [
+      {
+        id: "centerText",
+        beforeDraw(chart) {
+          const { ctx: c, width, height } = chart;
+          c.save();
+          c.font = "bold 1.6rem sans-serif";
+          c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#333";
+          c.textAlign = "center";
+          c.textBaseline = "middle";
+          c.fillText(summary.successRate + "%", width / 2, height / 2 - 5);
+          c.font = "0.7rem sans-serif";
+          c.fillStyle = "#999";
+          c.fillText("sucesso", width / 2, height / 2 + 18);
+          c.restore();
+        },
+      },
+    ],
+  });
+}
+
+function renderHourlyChart(hourly) {
+  const ctx = document.getElementById("chartHourly");
+  if (!ctx) return;
+
+  if (chartHourly) chartHourly.destroy();
+
+  chartHourly = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: hourly.map((h) => h.hour),
+      datasets: [
+        {
+          label: "Mensagens",
+          data: hourly.map((h) => h.sent),
+          fill: true,
+          backgroundColor: "rgba(59, 130, 246, 0.1)",
+          borderColor: "#3b82f6",
+          borderWidth: 2,
+          tension: 0.4,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointBackgroundColor: "#3b82f6",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => `Horário: ${items[0].label}`,
+            label: (item) => ` ${item.raw.toLocaleString("pt-BR")} mensagens`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { maxTicksLimit: 12, font: { size: 10 } },
+        },
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+      },
+    },
+  });
+}
+
+function renderRecentCampaigns(campaigns) {
+  const el = document.getElementById("analyticsRecentCampaigns");
+  if (!campaigns || campaigns.length === 0) {
+    el.innerHTML = '<p class="empty-state"><i class="fas fa-inbox"></i><br>Nenhuma campanha no período.</p>';
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr>
+      <th>Data</th>
+      <th>Mensagem</th>
+      <th>Total</th>
+      <th>Enviadas</th>
+      <th>Falhas</th>
+      <th>Taxa</th>
+      <th></th>
+    </tr></thead>
+    <tbody>`;
+
+  campaigns.forEach((c) => {
+    const dt = new Date(c.date);
+    const dateStr = dt.toLocaleDateString("pt-BR") + " " + dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const rateClass = c.successRate >= 90 ? "rate-good" : c.successRate >= 70 ? "rate-ok" : "rate-bad";
+    html += `<tr>
+      <td>${dateStr}</td>
+      <td class="campaign-preview" title="${(c.messagePreview || "").replace(/"/g, "&quot;")}">${c.messagePreview}</td>
+      <td>${c.total}</td>
+      <td>${c.sent}</td>
+      <td>${c.failed}</td>
+      <td><span class="rate-badge ${rateClass}">${c.successRate}%</span></td>
+      <td><button class="btn-small btn-small-success" onclick="window.open('/api/history/${c.id}/export?token=${authToken}','_blank')" title="Exportar"><i class="fas fa-download"></i></button></td>
+    </tr>`;
+  });
+
+  html += "</tbody></table>";
+  el.innerHTML = html;
+}
+
+function setChartView(view, btn) {
+  currentChartView = view;
+  document.querySelectorAll(".chart-toggle").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  if (analyticsData) renderTimelineChart(analyticsData);
+}
+
+function toggleExportMenu() {
+  const menu = document.getElementById("exportMenu");
+  menu.style.display = menu.style.display === "none" ? "block" : "none";
+}
+
+function exportAnalytics(type) {
+  document.getElementById("exportMenu").style.display = "none";
+  if (type === "summary") {
+    window.open(`/api/analytics/export?token=${authToken}`, "_blank");
+  } else {
+    window.open(`/api/analytics/export-detailed?token=${authToken}`, "_blank");
+  }
+}
+
+// Fecha menu export ao clicar fora
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("exportMenu");
+  const dropdown = e.target.closest(".export-dropdown");
+  if (menu && !dropdown) menu.style.display = "none";
+});
+
+// ═══════════════════════════════════════════════════════════════
+// HISTÓRICO
+// ═══════════════════════════════════════════════════════════════
+async function loadHistory() {
+  try {
+    const res = await authFetch("/api/history");
+    const data = await res.json();
+    const list = document.getElementById("historyList");
+
+    if (!data.history || data.history.length === 0) {
+      list.innerHTML = '<p class="empty-state"><i class="fas fa-inbox"></i><br>Nenhum envio registrado.</p>';
+      return;
+    }
+
+    list.innerHTML = data.history
+      .map(
+        (h) => `
+      <div class="history-card">
+        <div class="history-header">
+          <div>
+            <strong>${new Date(h.date).toLocaleDateString("pt-BR")} ${new Date(h.date).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</strong>
+            <p class="history-preview">${h.messagePreview || "—"}</p>
+          </div>
+          <div class="history-stats">
+            <span class="badge badge-success">✅ ${h.sent}</span>
+            <span class="badge badge-error">❌ ${h.failed}</span>
+            <span class="badge">${h.total} total</span>
+          </div>
+        </div>
+        <div class="history-actions">
+          <button class="btn-small btn-small-success" onclick="window.open('/api/history/${h.id}/export?token=${authToken || ""}','_blank')">
+            <i class="fas fa-download"></i> Exportar CSV
+          </button>
+        </div>
+      </div>`
+      )
+      .join("");
+  } catch (err) {
+    console.error("Erro ao carregar histórico:", err);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AGENDAMENTOS
+// ═══════════════════════════════════════════════════════════════
+function openScheduleModal() {
+  const activeCustomers = customers.filter((c) => c.active);
+  if (activeCustomers.length === 0) return alert("Nenhum contato ativo.");
+  const msg = document.getElementById("messageTemplate").value.trim();
+  if (!msg) return alert("Escreva uma mensagem.");
+
+  // Pre-fill datetime para próxima hora
+  const now = new Date();
+  now.setHours(now.getHours() + 1, 0, 0, 0);
+  document.getElementById("scheduleDateTime").value = now.toISOString().slice(0, 16);
+  document.getElementById("scheduleName").value = "";
+  document.getElementById("scheduleModal").style.display = "flex";
+}
+
+async function confirmSchedule() {
+  const dt = document.getElementById("scheduleDateTime").value;
+  if (!dt) return alert("Selecione data e hora.");
+  if (new Date(dt) <= new Date()) return alert("A data deve ser no futuro.");
+
+  const activeCustomers = customers.map((c, i) => ({ ...c, _idx: i })).filter((c) => c.active);
+
+  try {
+    const res = await authFetch("/api/schedules", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("scheduleName").value || undefined,
+        scheduledAt: new Date(dt).toISOString(),
+        customers: activeCustomers,
+        messageTemplate: document.getElementById("messageTemplate").value,
+        images: uploadedImages,
+        sendImage: document.getElementById("sendImageCheck").checked,
+        intervalMin: parseInt(document.getElementById("intervalMin").value) * 1000,
+        intervalMax: parseInt(document.getElementById("intervalMax").value) * 1000,
+      }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      closeModal("scheduleModal");
+      alert("Agendamento criado! Veja a aba 'Agendamentos'.");
+      loadSchedules();
+    } else {
+      alert("Erro: " + data.error);
+    }
+  } catch (err) {
+    alert("Erro: " + err.message);
+  }
+}
+
+async function loadSchedules() {
+  try {
+    const res = await authFetch("/api/schedules");
+    const data = await res.json();
+    const list = document.getElementById("schedulesList");
+
+    if (!data.schedules || data.schedules.length === 0) {
+      list.innerHTML = '<p class="empty-state"><i class="fas fa-calendar-times"></i><br>Nenhum agendamento.</p>';
+      return;
+    }
+
+    list.innerHTML = data.schedules
+      .map((s) => {
+        const dt = new Date(s.scheduledAt);
+        const statusBadge =
+          s.status === "completed"
+            ? '<span class="badge badge-success">Concluído</span>'
+            : s.status === "running"
+              ? '<span class="badge badge-warning">Executando</span>'
+              : '<span class="badge badge-pending">Pendente</span>';
+        return `
+        <div class="schedule-card">
+          <div class="schedule-header">
+            <div>
+              <strong>${s.name}</strong>
+              <p class="hint">${dt.toLocaleDateString("pt-BR")} às ${dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} — ${s.customers?.length || 0} contatos</p>
+            </div>
+            ${statusBadge}
+          </div>
+          ${s.status === "pending" ? `<button class="btn-small btn-small-danger" onclick="deleteSchedule('${s.id}')"><i class="fas fa-trash"></i> Excluir</button>` : ""}
+        </div>`;
+      })
+      .join("");
+  } catch (err) {
+    console.error("Erro ao carregar agendamentos:", err);
+  }
+}
+
+async function deleteSchedule(id) {
+  if (!confirm("Excluir este agendamento?")) return;
+  await authFetch(`/api/schedules/${id}`, { method: "DELETE" });
+  loadSchedules();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MODAIS
+// ═══════════════════════════════════════════════════════════════
+function closeModal(id) {
+  document.getElementById(id).style.display = "none";
 }

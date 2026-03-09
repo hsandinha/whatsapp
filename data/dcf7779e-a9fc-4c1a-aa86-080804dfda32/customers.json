@@ -1,0 +1,26 @@
+{
+  "headers": [
+    "nome",
+    "whatsapp"
+  ],
+  "customers": [
+    {
+      "active": false,
+      "nome": "Hebert Sandinha",
+      "whatsapp": "31984005308",
+      "_validated": true
+    },
+    {
+      "active": false,
+      "nome": "Adriana",
+      "whatsapp": "31996927544",
+      "_validated": true
+    },
+    {
+      "active": false,
+      "nome": "Hebert Sandinha",
+      "whatsapp": "31984005305",
+      "_validated": false
+    }
+  ]
+}
