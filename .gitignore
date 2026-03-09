@@ -1,1 +1,38 @@
-/node_modules
+# Dependências
+node_modules/
+
+# Variáveis de ambiente (CHAVES SECRETAS)
+.env
+.env.*
+
+# Sessão WhatsApp (dados de login do usuário)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Dados de usuários (contatos, histórico, configs)
+data/
+
+# Arquivos enviados pelos usuários
+uploads/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+Thumbs.db
+
+# Planilhas de teste
+*.xlsx
+*.xls
+*.csv
+
+# Logs
+*.log
+npm-debug.log*
+
+# Debug
+debug-*.png
