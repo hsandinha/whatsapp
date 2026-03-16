@@ -25,7 +25,7 @@ async function init() {
 
     // Verificar se é admin
     try {
-        const resp = await authFetch("/api/admin/check");
+        const resp = await authFetch("/api/check-admin");
         const data = await resp.json();
         if (!data.isAdmin) {
             showAccessDenied();

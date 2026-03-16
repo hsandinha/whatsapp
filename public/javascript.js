@@ -25,8 +25,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("themeIcon").className = "fas fa-sun";
   }
 
-  // Supabase auth check
-  const { data: { session } } = await sb.auth.getSession();
+  // Supabase auth check — tenta renovar sessão para garantir token válido
+  let { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    // Força refresh para obter token atualizado
+    const { data: refreshData } = await sb.auth.refreshSession();
+    if (refreshData.session) {
+      session = refreshData.session;
+    }
+  }
   if (!session) {
     // Não logado — redireciona para landing
     window.location.href = "/";
@@ -95,14 +102,15 @@ async function updateUserInfo() {
       if (data.profile?.name) nameEl.textContent = data.profile.name;
     }
   } catch { }
-  // Verifica se é admin e mostra link
+  // Verifica se é admin e mostra link (silencioso — 403 é esperado para não-admins)
   try {
-    const adminRes = await authFetch("/api/admin/check");
+    const adminRes = await authFetch("/api/check-admin");
     if (adminRes.ok) {
       const adminData = await adminRes.json();
       const adminLink = document.getElementById("adminLink");
       if (adminLink && adminData.isAdmin) adminLink.style.display = "flex";
     }
+    // 403 = não é admin, ignora silenciosamente
   } catch { }
 }
 
@@ -124,16 +132,36 @@ function authHeaders() {
   return h;
 }
 
-function authFetch(url, opts = {}) {
+async function authFetch(url, opts = {}) {
   opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
-  return fetch(url, opts);
+  let res = await fetch(url, opts);
+
+  // Se receber 401, tenta renovar o token e refazer a requisição
+  if (res.status === 401) {
+    const { data: refreshData } = await sb.auth.refreshSession();
+    if (refreshData.session) {
+      authToken = refreshData.session.access_token;
+      opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+      res = await fetch(url, opts);
+    } else {
+      // Refresh falhou — sessão expirada, redireciona
+      window.location.href = "/";
+      return res;
+    }
+  }
+  return res;
 }
 
 // ═══════════════════════════════════════════════════════════════
 // SSE
 // ═══════════════════════════════════════════════════════════════
+let sseReconnectTimer = null;
+let sseReconnectDelay = 1000;
+
 function setupEventSource() {
   if (eventSource) eventSource.close();
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+
   const tokenParam = authToken ? `?token=${authToken}` : "";
   eventSource = new EventSource(`/events${tokenParam}`);
 
@@ -145,8 +173,22 @@ function setupEventSource() {
     handleJobEvent(JSON.parse(e.data));
   });
 
+  eventSource.onopen = () => {
+    sseReconnectDelay = 1000; // reset backoff ao conectar
+  };
+
   eventSource.onerror = () => {
-    console.warn("SSE desconectado...");
+    console.warn("SSE desconectado. Reconectando em", sseReconnectDelay / 1000, "s...");
+    eventSource.close();
+    sseReconnectTimer = setTimeout(async () => {
+      // Renova token antes de reconectar
+      const { data: refreshData } = await sb.auth.refreshSession();
+      if (refreshData.session) {
+        authToken = refreshData.session.access_token;
+      }
+      setupEventSource();
+    }, sseReconnectDelay);
+    sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000); // backoff até 30s
   };
 }
 

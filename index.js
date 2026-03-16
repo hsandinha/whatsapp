@@ -253,6 +253,16 @@ app.use(express.static("public"));
 // Protege todas as rotas /api com Supabase auth
 app.use("/api", supabaseAuth);
 
+// ─── Admin check (ANTES do middleware, acessível a todos autenticados) ─────
+app.get("/api/check-admin", async (req, res) => {
+  try {
+    const admin = await isAdmin(req.userId, req.user?.email);
+    res.json({ isAdmin: admin });
+  } catch (err) {
+    res.json({ isAdmin: false });
+  }
+});
+
 // ─── Admin Middleware ─────────────────────
 async function adminMiddleware(req, res, next) {
   try {
@@ -310,14 +320,28 @@ app.get("/events", async (req, res) => {
   }
   if (!userId) return res.status(401).json({ error: "Token obrigatório" });
 
+  // Desabilita timeouts para manter a conexão SSE viva indefinidamente
+  req.setTimeout(0);
+  res.setTimeout(0);
+  if (req.socket) req.socket.setTimeout(0);
+
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
   });
+
+  // Desabilita buffering do Nagle para envio imediato
+  if (req.socket) req.socket.setNoDelay(true);
 
   if (!sseClients.has(userId)) sseClients.set(userId, new Set());
   sseClients.get(userId).add(res);
+
+  // Heartbeat a cada 25s para manter a conexão viva
+  const heartbeat = setInterval(() => {
+    try { res.write(":heartbeat\n\n"); } catch { clearInterval(heartbeat); }
+  }, 25000);
 
   // Envia estado atual da sessão do usuário
   const sess = getSession(userId);
@@ -325,6 +349,7 @@ app.get("/events", async (req, res) => {
     `event: session\ndata: ${JSON.stringify({ status: sess.connectionState, qr: sess.currentQR })}\n\n`
   );
   req.on("close", () => {
+    clearInterval(heartbeat);
     const clients = sseClients.get(userId);
     if (clients) {
       clients.delete(res);
@@ -419,10 +444,14 @@ async function initializeClient(userId) {
   const sessionDir = path.join(__dirname, ".wwebjs_auth", `session-${userId}`);
   try {
     const { execSync } = require("child_process");
-    // Mata qualquer processo chrome/chromium que referencia esta sessão
-    execSync(`lsof -ti "${sessionDir}" 2>/dev/null | xargs kill -9 2>/dev/null || true`, { timeout: 5000 });
-    // Também tenta matar por padrão de comando
-    execSync(`pkill -9 -f "session-${userId}" 2>/dev/null || true`, { timeout: 5000 });
+    if (process.platform === "win32") {
+      // Windows: mata processos chrome que referenciam esta sessão
+      execSync(`taskkill /F /FI "IMAGENAME eq chrome.exe" /FI "WINDOWTITLE eq *${userId}*" 2>nul & exit /b 0`, { timeout: 5000, shell: true });
+    } else {
+      // Linux/Mac
+      execSync(`lsof -ti "${sessionDir}" 2>/dev/null | xargs kill -9 2>/dev/null || true`, { timeout: 5000 });
+      execSync(`pkill -9 -f "session-${userId}" 2>/dev/null || true`, { timeout: 5000 });
+    }
   } catch { }
 
   // Remove TODOS os lock files do Chromium (SingletonLock, SingletonSocket, SingletonCookie)
@@ -584,14 +613,10 @@ app.put("/api/profile", async (req, res) => {
 // ROTAS — ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 
-// Verificar se usuário é admin
+// Verificar se usuário é admin (rota legada, redireciona para /api/check-admin)
 app.get("/api/admin/check", async (req, res) => {
-  try {
-    const admin = await isAdmin(req.userId, req.user?.email);
-    res.json({ isAdmin: admin });
-  } catch (err) {
-    res.json({ isAdmin: false });
-  }
+  // Esta rota passa pelo adminMiddleware, então só admins chegam aqui
+  res.json({ isAdmin: true });
 });
 
 // Listar todos os usuários
@@ -1807,12 +1832,16 @@ process.on("SIGTERM", async () => {
   try {
     const { execSync } = require("child_process");
     const authDir = path.join(__dirname, ".wwebjs_auth");
-    // Mata processos Chromium que referenciam nosso diretório de auth
-    execSync(`lsof -ti "${authDir}" 2>/dev/null | xargs kill -9 2>/dev/null || true`, { timeout: 5000 });
-    // Remove todos os lock files
-    execSync(`find "${authDir}" -name "SingletonLock" -delete 2>/dev/null || true`, { timeout: 5000 });
-    execSync(`find "${authDir}" -name "SingletonSocket" -delete 2>/dev/null || true`, { timeout: 5000 });
-    execSync(`find "${authDir}" -name "SingletonCookie" -delete 2>/dev/null || true`, { timeout: 5000 });
+    if (process.platform === "win32") {
+      // Windows: remove lock files via PowerShell
+      execSync(`powershell -Command "Get-ChildItem -Path '${authDir}' -Recurse -Include SingletonLock,SingletonSocket,SingletonCookie -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"`, { timeout: 5000, shell: true });
+    } else {
+      // Linux/Mac
+      execSync(`lsof -ti "${authDir}" 2>/dev/null | xargs kill -9 2>/dev/null || true`, { timeout: 5000 });
+      execSync(`find "${authDir}" -name "SingletonLock" -delete 2>/dev/null || true`, { timeout: 5000 });
+      execSync(`find "${authDir}" -name "SingletonSocket" -delete 2>/dev/null || true`, { timeout: 5000 });
+      execSync(`find "${authDir}" -name "SingletonCookie" -delete 2>/dev/null || true`, { timeout: 5000 });
+    }
     console.log("🧹 Limpeza de processos anteriores concluída");
   } catch { }
 })();
@@ -1821,4 +1850,8 @@ app.listen(port, () => {
   console.log(`\n🟢 WhatsApp Sender Pro v5.1 Multi-User — http://localhost:${port}\n`);
   console.log(`   Landing: http://localhost:${port}/`);
   console.log(`   App:     http://localhost:${port}/app\n`);
+}).on("listening", function () {
+  // Aumenta timeouts do servidor para suportar conexões SSE long-lived
+  this.keepAliveTimeout = 120000;  // 2 minutos
+  this.headersTimeout = 125000;    // um pouco acima do keepAliveTimeout
 });
