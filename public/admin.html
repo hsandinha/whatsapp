@@ -22,7 +22,7 @@
             <div class="denied-icon">🚫</div>
             <h2>Acesso Negado</h2>
             <p>Você não tem permissão para acessar o painel administrativo.</p>
-            <a href="/app" class="btn-primary">Voltar ao Dashboard</a>
+            <a href="/app" data-app-path="/app" class="btn-primary">Voltar ao Dashboard</a>
         </div>
     </div>
 
@@ -43,7 +43,7 @@
                 </button>
             </nav>
             <div class="sidebar-footer">
-                <a href="/app" class="nav-item back-link">
+                <a href="/app" data-app-path="/app" class="nav-item back-link">
                     <span class="nav-icon">←</span> Voltar ao App
                 </a>
                 <button class="nav-item" onclick="doLogout()">
@@ -308,6 +308,7 @@
     <!-- Toast -->
     <div id="toast" class="toast"></div>
 
+    <script src="app-config.js"></script>
     <script src="admin.js"></script>
 </body>
 

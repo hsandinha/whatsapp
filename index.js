@@ -53,6 +53,37 @@ const WA_READY_TIMEOUT_MS = Math.max(
   parseInt(process.env.WA_READY_TIMEOUT_MS || "120000", 10) || 120000,
   30000
 );
+const CORS_ALLOWED_ORIGINS = new Set(
+  (process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+function appendVaryHeader(res, value) {
+  const current = String(res.getHeader("Vary") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!current.includes(value)) current.push(value);
+  if (current.length > 0) res.setHeader("Vary", current.join(", "));
+}
+
+function isCorsOriginAllowed(origin) {
+  if (!origin) return false;
+  return CORS_ALLOWED_ORIGINS.has("*") || CORS_ALLOWED_ORIGINS.has(origin);
+}
+
+function applyCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  if (!isCorsOriginAllowed(origin)) return false;
+
+  appendVaryHeader(res, "Origin");
+  res.setHeader("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGINS.has("*") ? "*" : origin);
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  return true;
+}
 
 function getWhatsAppClientDeps() {
   if (!WhatsAppClientClass || !WhatsAppLocalAuthClass) {
@@ -412,6 +443,20 @@ function getSession(userId) {
 // ═══════════════════════════════════════════════════════════════
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const corsApplied = applyCorsHeaders(req, res);
+
+  if (req.method === "OPTIONS") {
+    if (origin && !corsApplied) {
+      return res.status(403).json({ error: "Origin não permitida" });
+    }
+    return res.status(204).end();
+  }
+
+  next();
+});
 
 // Em localhost, desabilita cache dos assets principais para evitar UI com JS antigo.
 app.use((req, res, next) => {

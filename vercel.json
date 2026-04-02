@@ -1,0 +1,76 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/login/",
+      "destination": "/login",
+      "permanent": true
+    },
+    {
+      "source": "/app/",
+      "destination": "/app",
+      "permanent": true
+    },
+    {
+      "source": "/admin/",
+      "destination": "/admin",
+      "permanent": true
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/login.html"
+    },
+    {
+      "source": "/login",
+      "destination": "/login.html"
+    },
+    {
+      "source": "/app",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/admin",
+      "destination": "/admin.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/login.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/admin.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/app-config.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    }
+  ]
+}

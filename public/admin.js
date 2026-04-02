@@ -2,8 +2,7 @@
    ADMIN PANEL — JavaScript v5.0
    ═══════════════════════════════════════════════════════════════ */
 
-const SUPABASE_URL = "https://piigfztyhymxrcrpavwq.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaWdmenR5aHlteHJjcnBhdndxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5OTkzNzQsImV4cCI6MjA4ODU3NTM3NH0.-nxRKReeM8blNKqw5kIEIHqolxRdOx800zwsmREOq4Y";
+const { SUPABASE_URL, SUPABASE_ANON_KEY, resolveAppUrl, resolveBackendUrl } = window.APP_CONFIG;
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -18,7 +17,7 @@ async function init() {
     // Verificar sessão
     const { data: { session } } = await sb.auth.getSession();
     if (!session) {
-        window.location.href = "/";
+        window.location.href = resolveAppUrl("/");
         return;
     }
     authToken = session.access_token;
@@ -62,7 +61,7 @@ function showAccessDenied() {
 // AUTH FETCH
 // ═══════════════════════════════════════════════════════════════
 async function authFetch(url, options = {}) {
-    return fetch(url, {
+    return fetch(resolveBackendUrl(url), {
         ...options,
         headers: {
             "Content-Type": "application/json",
@@ -429,7 +428,7 @@ async function deleteUser() {
 // ═══════════════════════════════════════════════════════════════
 async function doLogout() {
     await sb.auth.signOut();
-    window.location.href = "/";
+    window.location.href = resolveAppUrl("/");
 }
 
 // ═══════════════════════════════════════════════════════════════

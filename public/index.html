@@ -39,7 +39,7 @@
                             <small id="userEmail">email@email.com</small>
                         </div>
                         <hr class="divider">
-                        <a href="/admin" id="adminLink" class="dropdown-item" style="display:none;">
+                        <a href="/admin" id="adminLink" data-app-path="/admin" class="dropdown-item" style="display:none;">
                             <i class="fas fa-cog"></i> Painel Admin
                         </a>
                         <button onclick="doLogout()" class="dropdown-item">
@@ -633,6 +633,7 @@
 
     <!-- ═══ Modal: Configurações (removido — não precisa mais de senha local) ═══ -->
 
+    <script src="app-config.js"></script>
     <script src="javascript.js"></script>
 </body>
 

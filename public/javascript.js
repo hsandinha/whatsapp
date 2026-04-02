@@ -2,8 +2,13 @@
 // WhatsApp Sender Pro v5.0 — Frontend (Supabase Auth)
 // ═══════════════════════════════════════════════════════════════
 
-const SUPABASE_URL = "https://piigfztyhymxrcrpavwq.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaWdmenR5aHlteHJjcnBhdndxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5OTkzNzQsImV4cCI6MjA4ODU3NTM3NH0.-nxRKReeM8blNKqw5kIEIHqolxRdOx800zwsmREOq4Y";
+const {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  resolveAppUrl,
+  resolveBackendUrl,
+  resolveBackendAssetUrl,
+} = window.APP_CONFIG;
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let customers = [];
@@ -23,6 +28,21 @@ const SESSION_STATUS_POLL_INTERVAL_MS = 3000;
 let sessionStatusPollTimer = null;
 let sessionStatusPollInFlight = false;
 let lastSessionStatus = "disconnected";
+
+function getMediaAssetUrl(file) {
+  return resolveBackendAssetUrl(file?.path || "");
+}
+
+function buildAuthenticatedBackendUrl(resourcePath) {
+  const separator = resourcePath.includes("?") ? "&" : "?";
+  return resolveBackendUrl(
+    `${resourcePath}${separator}token=${encodeURIComponent(authToken || "")}`
+  );
+}
+
+function openAuthenticatedBackendUrl(resourcePath) {
+  window.open(buildAuthenticatedBackendUrl(resourcePath), "_blank");
+}
 
 function getDraftStorageKey() {
   return currentUser?.id ? `whatsapp_sender_draft:${currentUser.id}` : null;
@@ -265,7 +285,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   if (!session) {
     // Não logado — redireciona para landing
-    window.location.href = "/";
+    window.location.href = resolveAppUrl("/");
     return;
   }
 
@@ -278,7 +298,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Listener para mudança de sessão (refresh token, logout)
   sb.auth.onAuthStateChange((event, session) => {
     if (event === "SIGNED_OUT" || !session) {
-      window.location.href = "/";
+      window.location.href = resolveAppUrl("/");
       return;
     }
     authToken = session.access_token;
@@ -344,7 +364,10 @@ async function updateUserInfo() {
     if (adminRes.ok) {
       const adminData = await adminRes.json();
       const adminLink = document.getElementById("adminLink");
-      if (adminLink && adminData.isAdmin) adminLink.style.display = "flex";
+      if (adminLink && adminData.isAdmin) {
+        adminLink.href = resolveAppUrl("/admin");
+        adminLink.style.display = "flex";
+      }
     }
     // 403 = não é admin, ignora silenciosamente
   } catch { }
@@ -361,7 +384,7 @@ async function doLogout() {
   if (eventSource) eventSource.close();
   authToken = null;
   currentUser = null;
-  window.location.href = "/";
+  window.location.href = resolveAppUrl("/");
 }
 
 function authHeaders() {
@@ -372,7 +395,8 @@ function authHeaders() {
 
 async function authFetch(url, opts = {}) {
   opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
-  let res = await fetch(url, opts);
+  const requestUrl = resolveBackendUrl(url);
+  let res = await fetch(requestUrl, opts);
 
   // Se receber 401, tenta renovar o token e refazer a requisição
   if (res.status === 401) {
@@ -380,10 +404,10 @@ async function authFetch(url, opts = {}) {
     if (refreshData.session) {
       authToken = refreshData.session.access_token;
       opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
-      res = await fetch(url, opts);
+      res = await fetch(requestUrl, opts);
     } else {
       // Refresh falhou — sessão expirada, redireciona
-      window.location.href = "/";
+      window.location.href = resolveAppUrl("/");
       return res;
     }
   }
@@ -439,7 +463,7 @@ function setupEventSource() {
   if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
 
   const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
-  eventSource = new EventSource(`/events${tokenParam}`);
+  eventSource = new EventSource(resolveBackendUrl(`/events${tokenParam}`));
 
   eventSource.addEventListener("session", (e) => {
     updateSessionUI(JSON.parse(e.data));
@@ -1035,7 +1059,7 @@ function updatePreviewContent() {
   if (document.getElementById("sendImageCheck").checked && uploadedImages.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedImages.forEach(img => {
-      mediaHtml += `<img src="${img.path}" class="preview-media-item" alt="${escapeHTML(img.name)}" />`;
+      mediaHtml += `<img src="${getMediaAssetUrl(img)}" class="preview-media-item" alt="${escapeHTML(img.name)}" />`;
     });
     mediaHtml += "</div>";
   }
@@ -1043,7 +1067,7 @@ function updatePreviewContent() {
   if (document.getElementById("sendImageCheck").checked && uploadedVideos.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedVideos.forEach(video => {
-      mediaHtml += `<video src="${video.path}" class="preview-media-item" preload="metadata" muted playsinline controls></video>`;
+      mediaHtml += `<video src="${getMediaAssetUrl(video)}" class="preview-media-item" preload="metadata" muted playsinline controls></video>`;
     });
     mediaHtml += "</div>";
   }
@@ -1303,7 +1327,7 @@ function renderVideoPreview() {
     const div = document.createElement("div");
     div.className = "image-item";
     div.innerHTML = `
-      <video src="${video.path}" muted playsinline preload="metadata" controls></video>
+      <video src="${getMediaAssetUrl(video)}" muted playsinline preload="metadata" controls></video>
       <button class="btn-remove" onclick="removeVideo(${i})" title="Remover"><i class="fas fa-times"></i></button>
       <input type="text" class="caption-input" placeholder="Legenda..." value="${video.caption || ""}"
         onchange="updateVideoCaption(${i}, this.value)" />
@@ -1463,7 +1487,7 @@ async function uploadMediaFiles(files, { expectedKind, successMessagePrefix, tar
   for (const f of files) fd.append("images", f);
 
   try {
-    const res = await fetch("/api/images/upload", {
+    const res = await fetch(resolveBackendUrl("/api/images/upload"), {
       method: "POST",
       body: fd,
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
@@ -1512,7 +1536,7 @@ function renderImagePreview() {
     const div = document.createElement("div");
     div.className = "image-item";
     div.innerHTML = `
-      <img src="${img.path}" alt="${img.name}" />
+      <img src="${getMediaAssetUrl(img)}" alt="${img.name}" />
       <button class="btn-remove" onclick="removeImage(${i})" title="Remover"><i class="fas fa-times"></i></button>
       <input type="text" class="caption-input" placeholder="Legenda..." value="${img.caption || ""}"
         onchange="updateCaption(${i}, this.value)" />
@@ -1995,7 +2019,7 @@ function updateTableStatus(index, status, error) {
 
 function exportCurrentResults() {
   if (lastHistoryId) {
-    window.open(`/api/history/${lastHistoryId}/export?token=${authToken || ""}`, "_blank");
+    openAuthenticatedBackendUrl(`/api/history/${lastHistoryId}/export`);
   } else {
     alert("Aguarde o envio finalizar para exportar.");
   }
@@ -2268,7 +2292,7 @@ function renderRecentCampaigns(campaigns) {
       <td>${c.sent}</td>
       <td>${c.failed}</td>
       <td><span class="rate-badge ${rateClass}">${c.successRate}%</span></td>
-      <td><button class="btn-small btn-small-success" onclick="window.open('/api/history/${c.id}/export?token=${authToken}','_blank')" title="Exportar"><i class="fas fa-download"></i></button></td>
+      <td><button class="btn-small btn-small-success" onclick="openAuthenticatedBackendUrl('/api/history/${c.id}/export')" title="Exportar"><i class="fas fa-download"></i></button></td>
     </tr>`;
   });
 
@@ -2291,9 +2315,9 @@ function toggleExportMenu() {
 function exportAnalytics(type) {
   document.getElementById("exportMenu").style.display = "none";
   if (type === "summary") {
-    window.open(`/api/analytics/export?token=${authToken}`, "_blank");
+    openAuthenticatedBackendUrl("/api/analytics/export");
   } else {
-    window.open(`/api/analytics/export-detailed?token=${authToken}`, "_blank");
+    openAuthenticatedBackendUrl("/api/analytics/export-detailed");
   }
 }
 
@@ -2334,7 +2358,7 @@ async function loadHistory() {
           </div>
         </div>
         <div class="history-actions">
-          <button class="btn-small btn-small-success" onclick="window.open('/api/history/${h.id}/export?token=${authToken || ""}','_blank')">
+          <button class="btn-small btn-small-success" onclick="openAuthenticatedBackendUrl('/api/history/${h.id}/export')">
             <i class="fas fa-download"></i> Exportar CSV
           </button>
         </div>

@@ -2,8 +2,7 @@
 // WhatsApp Sender Pro — Landing Page Auth (Supabase)
 // ═══════════════════════════════════════════════════════════════
 
-const SUPABASE_URL = "https://piigfztyhymxrcrpavwq.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaWdmenR5aHlteHJjcnBhdndxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5OTkzNzQsImV4cCI6MjA4ODU3NTM3NH0.-nxRKReeM8blNKqw5kIEIHqolxRdOx800zwsmREOq4Y";
+const { SUPABASE_URL, SUPABASE_ANON_KEY, resolveAppUrl } = window.APP_CONFIG;
 
 let supabaseClient = null;
 
@@ -93,7 +92,7 @@ async function checkSession() {
     try {
         const { data: { session } } = await sb.auth.getSession();
         if (session) {
-            window.location.href = "/app";
+            window.location.href = resolveAppUrl("/app");
         }
     } catch (err) {
         console.warn("Erro ao verificar sessão:", err);
@@ -132,7 +131,7 @@ async function doLogin() {
         }
 
         if (data.session) {
-            window.location.href = "/app";
+            window.location.href = resolveAppUrl("/app");
         }
     } catch (err) {
         showError("loginError", "Erro de conexão. Tente novamente.");
@@ -186,7 +185,7 @@ async function doRegister() {
         if (data.user && !data.session) {
             showSuccess("regSuccess", "Conta criada! Verifique seu email para confirmar o cadastro.");
         } else if (data.session) {
-            window.location.href = "/app";
+            window.location.href = resolveAppUrl("/app");
         }
     } catch (err) {
         showError("regError", "Erro de conexão. Tente novamente.");
@@ -210,7 +209,7 @@ async function doForgotPassword() {
 
     try {
         const { error } = await sb.auth.resetPasswordForEmail(email, {
-            redirectTo: window.location.origin + "/",
+            redirectTo: resolveAppUrl("/"),
         });
         if (error) {
             showError("loginError", error.message);

@@ -35,3 +35,18 @@ Start Command:
 
 Env recomendado:
 ```PUPPETEER_CACHE_DIR=/opt/render/project/.cache/puppeteer```
+
+## Frontend no Vercel
+O frontend pode ser publicado separadamente no Vercel usando o `vercel.json` deste repositório.
+
+Rotas públicas:
+- `/` -> `login.html`
+- `/app` -> `index.html`
+- `/admin` -> `admin.html`
+
+Antes de publicar, ajuste [public/app-config.js](public/app-config.js):
+- `APP_BASE_URL`: URL pública do frontend no Vercel
+- `API_BASE_URL`: URL pública do backend
+
+No backend, libere a origem do frontend:
+```CORS_ALLOWED_ORIGINS=https://seu-frontend.vercel.app```
