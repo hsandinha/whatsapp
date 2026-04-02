@@ -1,5 +1,6 @@
 # Dependências
 node_modules/
+node_modules_icloud_broken_*
 
 # Variáveis de ambiente (CHAVES SECRETAS)
 .env

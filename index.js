@@ -186,9 +186,43 @@ function resolveAuthDataDir() {
   );
 }
 
+function ensureDirExists(dirPath) {
+  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+  return dirPath;
+}
+
+function resolveStorageDir(envKey, defaultDirName) {
+  const envPath = process.env[envKey];
+  if (envPath) return path.resolve(envPath);
+  return path.resolve(path.join(__dirname, defaultDirName));
+}
+
+function migrateLegacyDir(legacyDir, nextDir, label) {
+  if (legacyDir === nextDir) return;
+  if (!fs.existsSync(legacyDir)) return;
+
+  const targetIsMissing = !fs.existsSync(nextDir);
+  const targetIsEmpty =
+    !targetIsMissing &&
+    fs.statSync(nextDir).isDirectory() &&
+    fs.readdirSync(nextDir).length === 0;
+
+  if (!targetIsMissing && !targetIsEmpty) return;
+
+  ensureDirExists(nextDir);
+  fs.cpSync(legacyDir, nextDir, { recursive: true });
+  console.log(`[${label}] Dados migrados para diretório persistente`);
+}
+
 const LEGACY_AUTH_DIR = path.resolve(path.join(__dirname, ".wwebjs_auth"));
-const AUTH_DIR = resolveAuthDataDir();
-if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+const LEGACY_DATA_DIR = path.resolve(path.join(__dirname, "data"));
+const LEGACY_UPLOADS_DIR = path.resolve(path.join(__dirname, "uploads"));
+const AUTH_DIR = ensureDirExists(resolveAuthDataDir());
+migrateLegacyDir(LEGACY_AUTH_DIR, AUTH_DIR, "AUTH");
+const DATA_DIR = ensureDirExists(resolveStorageDir("DATA_DIR", "data"));
+migrateLegacyDir(LEGACY_DATA_DIR, DATA_DIR, "DATA");
+const UPLOADS_DIR = ensureDirExists(resolveStorageDir("UPLOADS_DIR", "uploads"));
+migrateLegacyDir(LEGACY_UPLOADS_DIR, UPLOADS_DIR, "UPLOADS");
 
 function ensureAuthSessionDir(userId) {
   const sessionName = `session-${userId}`;
@@ -210,13 +244,10 @@ function ensureAuthSessionDir(userId) {
 // ═══════════════════════════════════════════════════════════════
 // DATABASE (JSON files em /data/<userId>)
 // ═══════════════════════════════════════════════════════════════
-const DATA_DIR = path.join(__dirname, "data");
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-
 // Retorna um objeto db com escopo por userId
 function userDb(userId) {
   const userDir = path.join(DATA_DIR, userId);
-  if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+  ensureDirExists(userDir);
 
   return {
     _path(file) {
@@ -397,7 +428,17 @@ app.get("/favicon.ico", (req, res) => {
   res.status(204).end();
 });
 
-app.use("/uploads", express.static("uploads"));
+app.get("/healthz", (req, res) => {
+  res.json({
+    ok: true,
+    status: "healthy",
+    authDir: AUTH_DIR,
+    dataDir: DATA_DIR,
+    uploadsDir: UPLOADS_DIR,
+  });
+});
+
+app.use("/uploads", express.static(UPLOADS_DIR));
 
 // ─── Supabase Auth Middleware ─────────────────────
 async function supabaseAuth(req, res, next) {
@@ -469,8 +510,7 @@ app.use("/api/admin", adminMiddleware);
 // ═══════════════════════════════════════════════════════════════
 // MULTER
 // ═══════════════════════════════════════════════════════════════
-const uploadsDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+const uploadsDir = UPLOADS_DIR;
 const IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".gif", ".webp"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 const DOCUMENT_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".zip"]);

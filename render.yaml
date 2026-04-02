@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: whatsapp
+    runtime: docker
+    plan: starter
+    region: virginia
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: commit
+    healthCheckPath: /healthz
+    disk:
+      name: whatsapp-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: WWEBJS_AUTH_DIR
+        value: /data/.wwebjs_auth
+      - key: DATA_DIR
+        value: /data/data
+      - key: UPLOADS_DIR
+        value: /data/uploads
+      - key: WA_READY_TIMEOUT_MS
+        value: 120000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

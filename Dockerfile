@@ -10,8 +10,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Define variável para o Puppeteer usar o Chromium do sistema
+ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV WWEBJS_AUTH_DIR=/data/.wwebjs_auth
+ENV DATA_DIR=/data/data
+ENV UPLOADS_DIR=/data/uploads
 
 WORKDIR /app
 
@@ -24,7 +28,7 @@ RUN npm ci --omit=dev
 COPY . .
 
 # Cria diretórios necessários
-RUN mkdir -p data uploads .wwebjs_auth
+RUN mkdir -p /data/data /data/uploads /data/.wwebjs_auth
 
 EXPOSE 3001
 
