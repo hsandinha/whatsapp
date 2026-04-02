@@ -4,8 +4,8 @@
   // - API_BASE_URL = URL pública do backend via Cloudflare Tunnel
   // Se deixar vazio, o app usa a própria origem atual.
   const manualConfig = {
-    APP_BASE_URL: "",
-    API_BASE_URL: "",
+    APP_BASE_URL: "https://whatsappphebert.vercel.app",
+    API_BASE_URL: "https://api.hebertsandinha.com",
   };
 
   // Exemplo:
