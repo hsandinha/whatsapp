@@ -8,6 +8,7 @@ node_modules/
 # Sessão WhatsApp (dados de login do usuário)
 .wwebjs_auth/
 .wwebjs_cache/
+.cache/
 
 # Dados de usuários (contatos, histórico, configs)
 data/

@@ -1,0 +1,17 @@
+{
+  "watch": [
+    "index.js",
+    "public",
+    "setup_tables.js",
+    "supabase_setup.sql"
+  ],
+  "ext": "js,json,html,css,sql",
+  "ignore": [
+    ".git/**",
+    "node_modules/**",
+    "data/**",
+    "uploads/**",
+    ".wwebjs_auth/**",
+    ".wwebjs_cache/**"
+  ]
+}

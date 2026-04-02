@@ -47,6 +47,7 @@ const port = process.env.PORT || 3001;
 let WhatsAppClientClass = null;
 let WhatsAppLocalAuthClass = null;
 let WhatsAppMessageMediaClass = null;
+let PuppeteerModule = null;
 
 function getWhatsAppClientDeps() {
   if (!WhatsAppClientClass || !WhatsAppLocalAuthClass) {
@@ -67,6 +68,93 @@ function getWhatsAppMessageMedia() {
   }
 
   return WhatsAppMessageMediaClass;
+}
+
+function getPuppeteerModule() {
+  if (!PuppeteerModule) {
+    PuppeteerModule = require("puppeteer");
+  }
+
+  return PuppeteerModule;
+}
+
+function findChromeExecutableInDir(rootDir) {
+  if (!rootDir || !fs.existsSync(rootDir)) return null;
+
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+        continue;
+      }
+
+      if (
+        entry.isFile() &&
+        (entry.name === "chrome" ||
+          entry.name === "chrome.exe" ||
+          entry.name === "Chromium")
+      ) {
+        return entryPath;
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveChromeExecutablePath() {
+  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  try {
+    const puppeteer = getPuppeteerModule();
+    const detectedPath =
+      typeof puppeteer.executablePath === "function"
+        ? puppeteer.executablePath()
+        : puppeteer.executablePath;
+
+    if (detectedPath && fs.existsSync(detectedPath)) {
+      return detectedPath;
+    }
+  } catch (err) {
+    console.warn("[PUPPETEER] Falha ao resolver executablePath automaticamente:", err.message || err);
+  }
+
+  const fixedCandidates = [
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+  ];
+
+  for (const candidate of fixedCandidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  const cacheCandidates = [
+    process.env.PUPPETEER_CACHE_DIR,
+    path.join(__dirname, ".cache", "puppeteer"),
+    path.join(process.cwd(), ".cache", "puppeteer"),
+    path.join("/opt/render/project", ".cache", "puppeteer"),
+    path.join(os.homedir(), ".cache", "puppeteer"),
+  ].filter(Boolean);
+
+  for (const candidate of cacheCandidates) {
+    const chromePath = findChromeExecutableInDir(candidate);
+    if (chromePath) return chromePath;
+  }
+
+  return envPath || undefined;
 }
 
 function resolveAuthDataDir() {
@@ -818,6 +906,7 @@ async function initializeClient(userId) {
   const sess = getSession(userId);
   const sessionDir = ensureAuthSessionDir(userId);
   const { Client, LocalAuth } = getWhatsAppClientDeps();
+  const chromeExecutablePath = resolveChromeExecutablePath();
 
   clearReconnectTimer(sess);
   sess.autoReconnectEnabled = true;
@@ -868,6 +957,11 @@ async function initializeClient(userId) {
   sess.isReady = false;
   sess.currentQR = null;
   sess.phoneNumber = null;
+  console.log(
+    `[INIT] Chromium (${userId}): ${chromeExecutablePath || "auto"} | cache=${
+      process.env.PUPPETEER_CACHE_DIR || "default"
+    }`
+  );
   broadcastSession(userId, { status: "connecting" });
 
   sess.client = new Client({
@@ -877,7 +971,7 @@ async function initializeClient(userId) {
     }),
     puppeteer: {
       headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      executablePath: chromeExecutablePath,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",

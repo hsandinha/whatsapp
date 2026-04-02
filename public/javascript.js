@@ -19,6 +19,10 @@ let lastHistoryId = null;
 let isApplyingDraft = false;
 let activeJobReconnectInFlight = false;
 const SEND_DRAFT_VERSION = 1;
+const SESSION_STATUS_POLL_INTERVAL_MS = 3000;
+let sessionStatusPollTimer = null;
+let sessionStatusPollInFlight = false;
+let lastSessionStatus = "disconnected";
 
 function getDraftStorageKey() {
   return currentUser?.id ? `whatsapp_sender_draft:${currentUser.id}` : null;
@@ -353,6 +357,8 @@ function toggleUserMenu() {
 
 async function doLogout() {
   await sb.auth.signOut();
+  clearSessionStatusPolling();
+  if (eventSource) eventSource.close();
   authToken = null;
   currentUser = null;
   window.location.href = "/";
@@ -389,6 +395,44 @@ async function authFetch(url, opts = {}) {
 // ═══════════════════════════════════════════════════════════════
 let sseReconnectTimer = null;
 let sseReconnectDelay = 1000;
+
+function clearSessionStatusPolling() {
+  if (!sessionStatusPollTimer) return;
+  clearTimeout(sessionStatusPollTimer);
+  sessionStatusPollTimer = null;
+}
+
+function shouldPollSessionStatus(status) {
+  return ["connecting", "authenticated", "loading", "reconnecting", "qr"].includes(status);
+}
+
+function scheduleSessionStatusPolling(delay = SESSION_STATUS_POLL_INTERVAL_MS) {
+  clearSessionStatusPolling();
+
+  if (!authToken || !shouldPollSessionStatus(lastSessionStatus) || sessionStatusPollInFlight) {
+    return;
+  }
+
+  sessionStatusPollTimer = setTimeout(async () => {
+    sessionStatusPollTimer = null;
+
+    if (!authToken || !shouldPollSessionStatus(lastSessionStatus)) return;
+
+    sessionStatusPollInFlight = true;
+    try {
+      const res = await authFetch("/api/session/status");
+      const data = await res.json();
+      updateSessionUI(data);
+    } catch (err) {
+      console.warn("Erro ao atualizar status da sessão:", err.message);
+    } finally {
+      sessionStatusPollInFlight = false;
+      if (shouldPollSessionStatus(lastSessionStatus)) {
+        scheduleSessionStatusPolling();
+      }
+    }
+  }, delay);
+}
 
 function setupEventSource() {
   if (eventSource) eventSource.close();
@@ -736,6 +780,8 @@ function formatSessionReason(data) {
 }
 
 function updateSessionUI(data) {
+  lastSessionStatus = data.status || "disconnected";
+
   const badge = document.getElementById("sessionStatus");
   const btnConnect = document.getElementById("btnConnect");
   const btnRestart = document.getElementById("btnRestart");
@@ -825,6 +871,13 @@ function updateSessionUI(data) {
       btnSchedule.disabled = true;
       if (sessionReason) sessionReason.textContent = formatSessionReason(data);
       break;
+  }
+
+  if (shouldPollSessionStatus(lastSessionStatus)) {
+    const delay = lastSessionStatus === "connecting" ? 1000 : SESSION_STATUS_POLL_INTERVAL_MS;
+    scheduleSessionStatusPolling(delay);
+  } else {
+    clearSessionStatusPolling();
   }
 }
 
