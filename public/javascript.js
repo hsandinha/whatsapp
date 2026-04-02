@@ -28,6 +28,7 @@ const SESSION_STATUS_POLL_INTERVAL_MS = 3000;
 let sessionStatusPollTimer = null;
 let sessionStatusPollInFlight = false;
 let lastSessionStatus = "disconnected";
+let authRedirectInFlight = false;
 
 function getMediaAssetUrl(file) {
   return resolveBackendAssetUrl(file?.path || "");
@@ -42,6 +43,22 @@ function buildAuthenticatedBackendUrl(resourcePath) {
 
 function openAuthenticatedBackendUrl(resourcePath) {
   window.open(buildAuthenticatedBackendUrl(resourcePath), "_blank");
+}
+
+async function redirectToLogin() {
+  if (authRedirectInFlight) return;
+  authRedirectInFlight = true;
+
+  clearSessionStatusPolling();
+  if (eventSource) eventSource.close();
+  authToken = null;
+  currentUser = null;
+
+  try {
+    await sb.auth.signOut({ scope: "local" });
+  } catch { }
+
+  window.location.replace(resolveAppUrl("/"));
 }
 
 function getDraftStorageKey() {
@@ -285,7 +302,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   if (!session) {
     // Não logado — redireciona para landing
-    window.location.href = resolveAppUrl("/");
+    await redirectToLogin();
     return;
   }
 
@@ -298,7 +315,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Listener para mudança de sessão (refresh token, logout)
   sb.auth.onAuthStateChange((event, session) => {
     if (event === "SIGNED_OUT" || !session) {
-      window.location.href = resolveAppUrl("/");
+      redirectToLogin();
       return;
     }
     authToken = session.access_token;
@@ -379,12 +396,7 @@ function toggleUserMenu() {
 }
 
 async function doLogout() {
-  await sb.auth.signOut();
-  clearSessionStatusPolling();
-  if (eventSource) eventSource.close();
-  authToken = null;
-  currentUser = null;
-  window.location.href = resolveAppUrl("/");
+  await redirectToLogin();
 }
 
 function authHeaders() {
@@ -407,7 +419,7 @@ async function authFetch(url, opts = {}) {
       res = await fetch(requestUrl, opts);
     } else {
       // Refresh falhou — sessão expirada, redireciona
-      window.location.href = resolveAppUrl("/");
+      await redirectToLogin();
       return res;
     }
   }

@@ -2,9 +2,39 @@
 // WhatsApp Sender Pro — Landing Page Auth (Supabase)
 // ═══════════════════════════════════════════════════════════════
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY, resolveAppUrl } = window.APP_CONFIG;
+const { SUPABASE_URL, SUPABASE_ANON_KEY, resolveAppUrl, resolveBackendUrl } = window.APP_CONFIG;
 
 let supabaseClient = null;
+let authRedirectInFlight = false;
+
+async function redirectToApp() {
+    window.location.replace(resolveAppUrl("/app"));
+}
+
+async function clearInvalidSession() {
+    if (authRedirectInFlight) return;
+    authRedirectInFlight = true;
+    try {
+        const sb = initSupabase();
+        if (sb) await sb.auth.signOut({ scope: "local" });
+    } catch { }
+    finally {
+        authRedirectInFlight = false;
+    }
+}
+
+async function validateBackendSession(accessToken) {
+    try {
+        const res = await fetch(resolveBackendUrl("/api/profile"), {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // AUTH MODAL — Definido PRIMEIRO para que botões sempre funcionem
@@ -92,7 +122,12 @@ async function checkSession() {
     try {
         const { data: { session } } = await sb.auth.getSession();
         if (session) {
-            window.location.href = resolveAppUrl("/app");
+            const backendSessionOk = await validateBackendSession(session.access_token);
+            if (backendSessionOk) {
+                await redirectToApp();
+                return;
+            }
+            await clearInvalidSession();
         }
     } catch (err) {
         console.warn("Erro ao verificar sessão:", err);
@@ -131,7 +166,7 @@ async function doLogin() {
         }
 
         if (data.session) {
-            window.location.href = resolveAppUrl("/app");
+            await redirectToApp();
         }
     } catch (err) {
         showError("loginError", "Erro de conexão. Tente novamente.");
@@ -185,7 +220,7 @@ async function doRegister() {
         if (data.user && !data.session) {
             showSuccess("regSuccess", "Conta criada! Verifique seu email para confirmar o cadastro.");
         } else if (data.session) {
-            window.location.href = resolveAppUrl("/app");
+            await redirectToApp();
         }
     } catch (err) {
         showError("regError", "Erro de conexão. Tente novamente.");

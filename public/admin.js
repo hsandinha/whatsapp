@@ -9,6 +9,16 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let authToken = null;
 let allUsers = [];
 let currentUserId = null; // para o modal
+let authRedirectInFlight = false;
+
+async function redirectToLogin() {
+    if (authRedirectInFlight) return;
+    authRedirectInFlight = true;
+    try {
+        await sb.auth.signOut({ scope: "local" });
+    } catch { }
+    window.location.replace(resolveAppUrl("/"));
+}
 
 // ═══════════════════════════════════════════════════════════════
 // INICIALIZAÇÃO
@@ -17,7 +27,7 @@ async function init() {
     // Verificar sessão
     const { data: { session } } = await sb.auth.getSession();
     if (!session) {
-        window.location.href = resolveAppUrl("/");
+        await redirectToLogin();
         return;
     }
     authToken = session.access_token;
@@ -427,8 +437,7 @@ async function deleteUser() {
 // LOGOUT
 // ═══════════════════════════════════════════════════════════════
 async function doLogout() {
-    await sb.auth.signOut();
-    window.location.href = resolveAppUrl("/");
+    await redirectToLogin();
 }
 
 // ═══════════════════════════════════════════════════════════════
