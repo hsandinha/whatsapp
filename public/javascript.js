@@ -9,11 +9,236 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let customers = [];
 let headers = [];
 let uploadedImages = [];
+let uploadedVideos = [];
+let uploadedDocs = [];
 let eventSource = null;
 let authToken = null;
 let currentUser = null;
 let jobStats = { sent: 0, failed: 0, total: 0 };
 let lastHistoryId = null;
+let isApplyingDraft = false;
+let activeJobReconnectInFlight = false;
+const SEND_DRAFT_VERSION = 1;
+
+function getDraftStorageKey() {
+  return currentUser?.id ? `whatsapp_sender_draft:${currentUser.id}` : null;
+}
+
+function readSendDraft() {
+  const key = getDraftStorageKey();
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (!draft || typeof draft !== "object") return null;
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+function updateScheduleVisibility() {
+  const checked = !!document.getElementById("scheduleCheck")?.checked;
+  document.getElementById("scheduleSection").style.display = checked ? "grid" : "none";
+}
+
+function updateMediaOptionsVisibility() {
+  const checked = !!document.getElementById("sendImageCheck")?.checked;
+  document.getElementById("sendOrderSection").style.display = checked ? "block" : "none";
+}
+
+function applySendOrderSelection(order, clickedEl) {
+  document.querySelectorAll(".send-order-option").forEach((option) => {
+    const radio = option.querySelector('input[name="sendOrder"]');
+    const active = clickedEl ? option === clickedEl : radio?.value === order;
+    option.classList.toggle("active", active);
+    if (radio) radio.checked = active;
+  });
+}
+
+function getActiveMediaTab() {
+  const activePanel = document.querySelector(".media-panel.active");
+  return activePanel?.id?.replace("media-", "") || "images";
+}
+
+function activateMediaTab(tab) {
+  document.querySelectorAll(".media-tab").forEach((button) => button.classList.remove("active"));
+  document.querySelectorAll(".media-panel").forEach((panel) => panel.classList.remove("active"));
+  const panel = document.getElementById(`media-${tab}`);
+  if (panel) panel.classList.add("active");
+  const button = Array.from(document.querySelectorAll(".media-tab")).find((el) =>
+    el.getAttribute("onclick")?.includes(`'${tab}'`)
+  );
+  if (button) button.classList.add("active");
+}
+
+function collectSendDraft() {
+  return {
+    version: SEND_DRAFT_VERSION,
+    messageTemplate: document.getElementById("messageTemplate")?.value || "",
+    intervalMin: document.getElementById("intervalMin")?.value || "5",
+    intervalMax: document.getElementById("intervalMax")?.value || "15",
+    dailyLimit: document.getElementById("dailyLimit")?.value || "200",
+    scheduleCheck: !!document.getElementById("scheduleCheck")?.checked,
+    scheduleStart: document.getElementById("scheduleStart")?.value || "08:00",
+    scheduleEnd: document.getElementById("scheduleEnd")?.value || "18:00",
+    sendImageCheck: !!document.getElementById("sendImageCheck")?.checked,
+    sendOrder: getSendOrder(),
+    enableButtons: !!document.getElementById("enableButtons")?.checked,
+    buttonType: document.getElementById("buttonType")?.value || "buttons",
+    btnFooter: document.getElementById("btnFooter")?.value || "",
+    listButtonText: document.getElementById("listButtonText")?.value || "Ver opções",
+    listSectionTitle: document.getElementById("listSectionTitle")?.value || "Opções",
+    buttonItems: getButtonItems(),
+    buttonDescriptions: getButtonDescriptions(),
+    uploadedImages,
+    uploadedVideos,
+    uploadedDocs,
+    activeMediaTab: getActiveMediaTab(),
+  };
+}
+
+function saveSendDraft() {
+  if (isApplyingDraft) return;
+  const key = getDraftStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(collectSendDraft()));
+  } catch (err) {
+    console.warn("Erro ao salvar rascunho local:", err.message);
+  }
+}
+
+function renderDraftButtonItems(items = [], descriptions = []) {
+  const container = document.getElementById("buttonItems");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!items.length) {
+    addButtonItem();
+    addButtonItem();
+    return;
+  }
+
+  items.forEach((item, index) => {
+    addButtonItem(item, descriptions[index] || "");
+  });
+}
+
+function applyInteractiveBuilderState(config = {}) {
+  const builder = document.getElementById("buttonsBuilder");
+  const items = Array.isArray(config.items) ? config.items : [];
+  const descriptions = Array.isArray(config.descriptions) ? config.descriptions : [];
+  const enabled = !!config.enabled && items.length > 0;
+
+  document.getElementById("enableButtons").checked = enabled;
+  document.getElementById("buttonType").value = config.type || "buttons";
+  document.getElementById("btnFooter").value = config.footer || "";
+  document.getElementById("listButtonText").value = config.buttonText || "Ver opções";
+  document.getElementById("listSectionTitle").value = config.sectionTitle || "Opções";
+
+  if (enabled) {
+    builder.style.display = "block";
+    renderDraftButtonItems(items, descriptions);
+    updateButtonsUI();
+    return;
+  }
+
+  builder.style.display = "none";
+  document.getElementById("buttonItems").innerHTML = "";
+}
+
+function normalizeIntervalForInput(value, fallback = "") {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return String(num >= 1000 ? Math.round(num / 1000) : Math.round(num));
+}
+
+function getPreferredMediaTab() {
+  if (uploadedImages.length > 0) return "images";
+  if (uploadedVideos.length > 0) return "videos";
+  if (uploadedDocs.length > 0) return "documents";
+  return "images";
+}
+
+function hasUploadedMedia() {
+  return uploadedImages.length > 0 || uploadedVideos.length > 0 || uploadedDocs.length > 0;
+}
+
+function restoreSendDraft() {
+  const draft = readSendDraft();
+  if (!draft) return;
+
+  isApplyingDraft = true;
+  try {
+    if (typeof draft.messageTemplate === "string") {
+      document.getElementById("messageTemplate").value = draft.messageTemplate;
+      document.getElementById("charCount").textContent = draft.messageTemplate.length;
+    }
+    if (draft.intervalMin) document.getElementById("intervalMin").value = draft.intervalMin;
+    if (draft.intervalMax) document.getElementById("intervalMax").value = draft.intervalMax;
+    if (draft.dailyLimit) document.getElementById("dailyLimit").value = draft.dailyLimit;
+
+    document.getElementById("scheduleCheck").checked = !!draft.scheduleCheck;
+    if (draft.scheduleStart) document.getElementById("scheduleStart").value = draft.scheduleStart;
+    if (draft.scheduleEnd) document.getElementById("scheduleEnd").value = draft.scheduleEnd;
+    updateScheduleVisibility();
+
+    document.getElementById("sendImageCheck").checked = !!draft.sendImageCheck;
+    updateMediaOptionsVisibility();
+    applySendOrderSelection(draft.sendOrder || "text_first");
+
+    document.getElementById("enableButtons").checked = !!draft.enableButtons;
+    document.getElementById("buttonType").value = draft.buttonType || "buttons";
+    document.getElementById("btnFooter").value = draft.btnFooter || "";
+    document.getElementById("listButtonText").value = draft.listButtonText || "Ver opções";
+    document.getElementById("listSectionTitle").value = draft.listSectionTitle || "Opções";
+
+    applyInteractiveBuilderState({
+      enabled: !!draft.enableButtons,
+      type: draft.buttonType || "buttons",
+      footer: draft.btnFooter || "",
+      buttonText: draft.listButtonText || "Ver opções",
+      sectionTitle: draft.listSectionTitle || "Opções",
+      items: Array.isArray(draft.buttonItems) ? draft.buttonItems : [],
+      descriptions: Array.isArray(draft.buttonDescriptions) ? draft.buttonDescriptions : [],
+    });
+
+    uploadedImages = Array.isArray(draft.uploadedImages) ? draft.uploadedImages : [];
+    uploadedVideos = Array.isArray(draft.uploadedVideos) ? draft.uploadedVideos : [];
+    uploadedDocs = Array.isArray(draft.uploadedDocs) ? draft.uploadedDocs : [];
+    renderImagePreview();
+    renderVideoPreview();
+    renderDocPreview();
+    activateMediaTab(draft.activeMediaTab || getPreferredMediaTab());
+    updatePreviewContent();
+  } finally {
+    isApplyingDraft = false;
+  }
+}
+
+function setupDraftPersistence() {
+  const selectors = [
+    "#messageTemplate",
+    "#intervalMin",
+    "#intervalMax",
+    "#dailyLimit",
+    "#scheduleStart",
+    "#scheduleEnd",
+    "#btnFooter",
+    "#listButtonText",
+    "#listSectionTitle",
+    ".btn-item-title",
+    ".btn-item-desc",
+  ];
+
+  document.addEventListener("input", (event) => {
+    if (selectors.some((selector) => event.target.matches(selector))) {
+      saveSendDraft();
+    }
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════
 // INICIALIZAÇÃO
@@ -57,21 +282,28 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   setupEventSource();
   setupImageUpload();
+  setupVideoUpload();
   setupDocUpload();
   setupMessageEditor();
+  setupDraftPersistence();
   checkSessionStatus();
-  loadDailyStats();
-  loadTemplateList();
-  loadSavedCustomers();
+  await loadDailyStats();
+  await loadTemplateList();
+  await loadSavedCustomers();
+  restoreSendDraft();
+  await restoreRunningJob();
 
   document.getElementById("xlsxInput").addEventListener("change", handleFile);
 
   // Show/hide send order when media checkbox changes
-  document.getElementById("sendImageCheck").addEventListener("change", (e) => {
-    document.getElementById("sendOrderSection").style.display = e.target.checked ? "block" : "none";
+  document.getElementById("sendImageCheck").addEventListener("change", () => {
+    updateMediaOptionsVisibility();
+    updatePreviewContent();
+    saveSendDraft();
   });
-  document.getElementById("scheduleCheck").addEventListener("change", (e) => {
-    document.getElementById("scheduleSection").style.display = e.target.checked ? "grid" : "none";
+  document.getElementById("scheduleCheck").addEventListener("change", () => {
+    updateScheduleVisibility();
+    saveSendDraft();
   });
 
   // Fecha dropdown ao clicar fora
@@ -173,8 +405,9 @@ function setupEventSource() {
     handleJobEvent(JSON.parse(e.data));
   });
 
-  eventSource.onopen = () => {
+  eventSource.onopen = async () => {
     sseReconnectDelay = 1000; // reset backoff ao conectar
+    await restoreRunningJob(true);
   };
 
   eventSource.onerror = () => {
@@ -198,39 +431,47 @@ function handleJobEvent(data) {
 
   switch (data.type) {
     case "progress":
+      setSendingUiActive();
+      syncJobStats(data);
       addLog(log, "info", `[${now}] Enviando para ${data.customer} (${data.phone}) — ${data.current}/${data.total}`);
       break;
     case "sent":
-      jobStats.sent++;
-      updateProgressUI();
+      setSendingUiActive();
+      syncJobStats(data);
       updateTableStatus(data.index, "ok");
       addLog(log, "success", `[${now}] ✅ ${data.nome} (${data.phone})`);
       updateDailySent();
       break;
     case "error":
-      jobStats.failed++;
-      updateProgressUI();
+      setSendingUiActive();
+      syncJobStats(data);
       updateTableStatus(data.index, "error", data.error);
       addLog(log, "error", `[${now}] ❌ ${data.nome}: ${data.error}`);
       break;
     case "waiting":
+      setSendingUiActive();
       addLog(log, "wait", `[${now}] ⏳ Aguardando ${(data.waitTime / 1000).toFixed(1)}s...`);
       break;
     case "paused_schedule":
+      setSendingUiActive();
       addLog(log, "warn", `[${now}] ⏸️ ${data.message}`);
       break;
     case "paused_limit":
+      setSendingUiActive();
       addLog(log, "warn", `[${now}] 🛡️ ${data.message}`);
       break;
     case "schedule_resumed":
+      setSendingUiActive();
       addLog(log, "success", `[${now}] ▶️ ${data.message}`);
       break;
     case "resuming":
-      document.getElementById("progressSection").style.display = "block";
+      setSendingUiActive();
+      syncJobStats(data);
       addLog(log, "warn", `[${now}] 📋 ${data.message}`);
       break;
     case "schedule_started":
-      document.getElementById("progressSection").style.display = "block";
+      setSendingUiActive();
+      syncJobStats(data);
       addLog(log, "info", `[${now}] ⏰ Agendamento "${data.name}" iniciado (${data.total} contatos)`);
       break;
     case "completed":
@@ -253,6 +494,169 @@ function addLog(container, type, message) {
   container.scrollTop = container.scrollHeight;
 }
 
+function setSendingUiActive() {
+  document.getElementById("progressSection").style.display = "block";
+  document.getElementById("btnSend").style.display = "none";
+  document.getElementById("btnSchedule").style.display = "none";
+  document.getElementById("btnCancel").style.display = "inline-flex";
+}
+
+function syncJobStats(data = {}) {
+  jobStats = {
+    sent: typeof data.sent === "number" ? data.sent : jobStats.sent,
+    failed: typeof data.failed === "number" ? data.failed : jobStats.failed,
+    total: typeof data.total === "number" ? data.total : jobStats.total,
+  };
+
+  if (!jobStats.total) {
+    jobStats.total = jobStats.sent + jobStats.failed;
+  }
+
+  updateProgressUI();
+}
+
+function applyRunningJobConfig(data = {}) {
+  isApplyingDraft = true;
+  try {
+    if (typeof data.messageTemplate === "string") {
+      document.getElementById("messageTemplate").value = data.messageTemplate;
+      document.getElementById("charCount").textContent = data.messageTemplate.length;
+    }
+
+    const intervalMin = normalizeIntervalForInput(data.intervalMin, document.getElementById("intervalMin").value || "5");
+    const intervalMax = normalizeIntervalForInput(data.intervalMax, document.getElementById("intervalMax").value || "15");
+    if (intervalMin) document.getElementById("intervalMin").value = intervalMin;
+    if (intervalMax) document.getElementById("intervalMax").value = intervalMax;
+
+    if (data.dailyLimit !== undefined && data.dailyLimit !== null) {
+      document.getElementById("dailyLimit").value = data.dailyLimit;
+    }
+
+    const hasSchedule = !!(data.scheduleStart && data.scheduleEnd);
+    document.getElementById("scheduleCheck").checked = hasSchedule;
+    document.getElementById("scheduleStart").value = data.scheduleStart || "08:00";
+    document.getElementById("scheduleEnd").value = data.scheduleEnd || "18:00";
+    updateScheduleVisibility();
+
+    document.getElementById("sendImageCheck").checked = !!data.sendImage;
+    updateMediaOptionsVisibility();
+    applySendOrderSelection(data.sendOrder || "text_first");
+
+    const interactiveData = data.interactiveData || null;
+    applyInteractiveBuilderState({
+      enabled: !!interactiveData?.enabled,
+      type: interactiveData?.type || "buttons",
+      footer: interactiveData?.footer || "",
+      buttonText: interactiveData?.buttonText || "Ver opções",
+      sectionTitle: interactiveData?.sectionTitle || "Opções",
+      items: interactiveData?.items || [],
+      descriptions: interactiveData?.descriptions || [],
+    });
+
+    uploadedImages = Array.isArray(data.images) ? data.images : [];
+    uploadedVideos = Array.isArray(data.videos) ? data.videos : [];
+    uploadedDocs = Array.isArray(data.documents) ? data.documents : [];
+    renderImagePreview();
+    renderVideoPreview();
+    renderDocPreview();
+    activateMediaTab(getPreferredMediaTab());
+
+    updatePreviewContent();
+  } finally {
+    isApplyingDraft = false;
+  }
+
+  saveSendDraft();
+}
+
+function restoreJobLog(data, silent = false) {
+  if (silent) return;
+
+  const log = document.getElementById("logContainer");
+  if (!log || log.children.length > 0) return;
+
+  const now = new Date().toLocaleTimeString("pt-BR");
+  const sent = Number(data.sent) || 0;
+  const failed = Number(data.failed) || 0;
+  const remaining =
+    typeof data.remaining === "number"
+      ? data.remaining
+      : Math.max((data.total || 0) - sent - failed, 0);
+
+  if (sent > 0 || failed > 0) {
+    addLog(log, "info", `[${now}] Histórico restaurado. ✅ ${sent} | ❌ ${failed}`);
+  }
+
+  addLog(log, "warn", `[${now}] 📋 Envio em andamento restaurado. ${remaining} pendentes.`);
+}
+
+function isSessionOperational(status) {
+  return ["connected", "connecting", "authenticated", "loading", "reconnecting", "qr"].includes(status);
+}
+
+async function ensureSessionForRunningJob() {
+  if (activeJobReconnectInFlight) return;
+
+  try {
+    const statusRes = await authFetch("/api/session/status");
+    if (!statusRes.ok) return;
+
+    const sessionData = await statusRes.json();
+    updateSessionUI(sessionData);
+
+    if (isSessionOperational(sessionData.status)) return;
+
+    activeJobReconnectInFlight = true;
+    const log = document.getElementById("logContainer");
+    const now = new Date().toLocaleTimeString("pt-BR");
+    if (log && log.children.length === 0) {
+      addLog(log, "warn", `[${now}] Reconectando a sessão do WhatsApp para retomar o envio...`);
+    }
+
+    await authFetch("/api/session/start", { method: "POST" });
+  } catch (err) {
+    console.warn("Erro ao reativar sessão para envio em andamento:", err.message);
+  } finally {
+    activeJobReconnectInFlight = false;
+  }
+}
+
+function resolveCustomerIndex(result) {
+  if (typeof result.index === "number") return result.index;
+  return customers.findIndex((c) =>
+    c.whatsapp === result.phone && (!result.nome || c.nome === result.nome)
+  );
+}
+
+function applyJobResult(result) {
+  const index = resolveCustomerIndex(result);
+  if (index < 0) return;
+  updateTableStatus(index, result.status === "ok" ? "ok" : "error", result.error);
+}
+
+async function restoreRunningJob(silent = false) {
+  try {
+    const res = await authFetch("/api/send/status");
+    if (!res.ok) return;
+
+    const data = await res.json();
+    if (!data.running) return;
+
+    applyRunningJobConfig(data);
+    setSendingUiActive();
+    syncJobStats(data);
+
+    if (Array.isArray(data.results)) {
+      data.results.forEach(applyJobResult);
+    }
+
+    restoreJobLog(data, silent);
+    await ensureSessionForRunningJob();
+  } catch (err) {
+    console.warn("Erro ao restaurar envio em andamento:", err.message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SESSÃO
 // ═══════════════════════════════════════════════════════════════
@@ -260,7 +664,7 @@ async function checkSessionStatus() {
   try {
     const res = await authFetch("/api/session/status");
     const data = await res.json();
-    updateSessionUI({ status: data.status, qr: data.qr, phoneNumber: data.phoneNumber });
+    updateSessionUI(data);
   } catch {
     updateSessionUI({ status: "disconnected" });
   }
@@ -271,7 +675,12 @@ async function startSession() {
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Iniciando...';
   try {
-    await authFetch("/api/session/start", { method: "POST" });
+    const res = await authFetch("/api/session/start", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    updateSessionUI({ status: "connecting" });
   } catch (err) {
     alert("Erro: " + err.message);
     btn.disabled = false;
@@ -281,13 +690,49 @@ async function startSession() {
 
 async function restartSession() {
   if (!confirm("Reconectar?")) return;
-  await authFetch("/api/session/restart", { method: "POST" });
+  try {
+    const res = await authFetch("/api/session/restart", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    updateSessionUI({ status: "connecting" });
+  } catch (err) {
+    alert("Erro: " + err.message);
+  }
 }
 
 async function closeSession() {
   if (!confirm("Desconectar e remover sessão?")) return;
-  await authFetch("/api/session/close", { method: "POST" });
-  updateSessionUI({ status: "disconnected" });
+  try {
+    const res = await authFetch("/api/session/close", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    updateSessionUI({ status: "disconnected" });
+  } catch (err) {
+    alert("Erro: " + err.message);
+  }
+}
+
+function formatSessionReason(data) {
+  const reason = data.reason || data.waState;
+  switch (reason) {
+    case "CONFLICT":
+      return "Conflito de sessão: outro WhatsApp Web assumiu a conexão.";
+    case "TIMEOUT":
+      return "A conexão expirou. O sistema vai tentar reconectar automaticamente.";
+    case "UNPAIRED":
+    case "UNPAIRED_IDLE":
+      return "Aparelho desvinculado. Será necessário escanear o QR novamente.";
+    case "LOGOUT":
+      return "Sessão encerrada no WhatsApp. Será necessário escanear o QR novamente.";
+    case "DEPRECATED_VERSION":
+      return "A versão do WhatsApp Web foi recusada. O cliente precisa ser atualizado.";
+    default:
+      return reason ? `Último motivo: ${reason}` : "Sessão salva automaticamente.";
+  }
 }
 
 function updateSessionUI(data) {
@@ -301,10 +746,12 @@ function updateSessionUI(data) {
   const qrImage = document.getElementById("qrImage");
   const loadingContainer = document.getElementById("loadingContainer");
   const loadingText = document.getElementById("loadingText");
+  const sessionReason = document.getElementById("sessionReason");
 
   badge.className = "status-badge";
   qrContainer.style.display = "none";
   loadingContainer.style.display = "none";
+  if (sessionReason) sessionReason.textContent = "Sessão salva automaticamente.";
 
   const hasContacts = customers.filter((c) => c.active).length > 0;
 
@@ -322,6 +769,7 @@ function updateSessionUI(data) {
       btnDisconnect.disabled = false;
       btnSend.disabled = !hasContacts;
       btnSchedule.disabled = !hasContacts;
+      if (sessionReason) sessionReason.textContent = "Sessão conectada e salva automaticamente.";
       break;
     case "qr":
       badge.classList.add("waiting");
@@ -336,12 +784,19 @@ function updateSessionUI(data) {
       btnDisconnect.disabled = false;
       btnSend.disabled = true;
       btnSchedule.disabled = true;
+      if (sessionReason) sessionReason.textContent = "Escaneie o QR com o celular conectado à internet.";
       break;
     case "connecting":
     case "authenticated":
     case "loading":
+    case "reconnecting":
       badge.classList.add("waiting");
-      const msg = data.percent ? `Carregando ${data.percent}%...` : "Conectando...";
+      const msg =
+        data.percent
+          ? `Carregando ${data.percent}%...`
+          : data.status === "reconnecting"
+            ? "Reconectando..."
+            : "Conectando...";
       badge.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span>${msg}</span>`;
       loadingContainer.style.display = "flex";
       loadingText.textContent = data.message || msg;
@@ -351,6 +806,12 @@ function updateSessionUI(data) {
       btnDisconnect.disabled = false;
       btnSend.disabled = true;
       btnSchedule.disabled = true;
+      if (sessionReason) {
+        sessionReason.textContent =
+          data.status === "reconnecting"
+            ? formatSessionReason(data)
+            : "Aguardando sincronização do WhatsApp Web.";
+      }
       break;
     default:
       badge.classList.add("disconnected");
@@ -362,6 +823,7 @@ function updateSessionUI(data) {
       btnDisconnect.disabled = true;
       btnSend.disabled = true;
       btnSchedule.disabled = true;
+      if (sessionReason) sessionReason.textContent = formatSessionReason(data);
       break;
   }
 }
@@ -412,6 +874,7 @@ function setupMessageEditor() {
   ta.addEventListener("input", () => {
     counter.textContent = ta.value.length;
     updatePreviewContent();
+    saveSendDraft();
   });
 }
 
@@ -463,6 +926,7 @@ function insertFormatting(type) {
   ta.setSelectionRange(cursorPos, cursorPos);
   document.getElementById("charCount").textContent = ta.value.length;
   updatePreviewContent();
+  saveSendDraft();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -519,6 +983,14 @@ function updatePreviewContent() {
     mediaHtml += '<div class="preview-media">';
     uploadedImages.forEach(img => {
       mediaHtml += `<img src="${img.path}" class="preview-media-item" alt="${escapeHTML(img.name)}" />`;
+    });
+    mediaHtml += "</div>";
+  }
+
+  if (document.getElementById("sendImageCheck").checked && uploadedVideos.length > 0) {
+    mediaHtml += '<div class="preview-media">';
+    uploadedVideos.forEach(video => {
+      mediaHtml += `<video src="${video.path}" class="preview-media-item" preload="metadata" muted playsinline controls></video>`;
     });
     mediaHtml += "</div>";
   }
@@ -583,6 +1055,7 @@ function toggleButtonsBuilder() {
   }
   updateButtonsUI();
   updatePreviewContent();
+  saveSendDraft();
 }
 
 function updateButtonsUI() {
@@ -607,9 +1080,10 @@ function updateButtonsUI() {
   });
 
   updatePreviewContent();
+  saveSendDraft();
 }
 
-function addButtonItem() {
+function addButtonItem(initialTitle = "", initialDescription = "") {
   const container = document.getElementById("buttonItems");
   const btype = document.getElementById("buttonType").value;
   const maxItems = btype === "buttons" ? 3 : 10;
@@ -629,12 +1103,16 @@ function addButtonItem() {
     </button>
   `;
   container.appendChild(div);
+  div.querySelector(".btn-item-title").value = initialTitle;
+  div.querySelector(".btn-item-desc").value = initialDescription;
+  saveSendDraft();
 }
 
 function removeButtonItem(btn) {
   btn.closest(".button-item").remove();
   renumberButtonItems();
   updatePreviewContent();
+  saveSendDraft();
 }
 
 function renumberButtonItems() {
@@ -690,17 +1168,11 @@ function getButtonsText() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MEDIA TABS (Images / Documents)
-// ═══════════════════════════════════════════════════════════════
-let uploadedDocs = [];
-
-// ═══════════════════════════════════════════════════════════════
 // SEND ORDER SELECTOR\n// ═══════════════════════════════════════════════════════════════
 function setSendOrder(order, el) {
-  document.querySelectorAll(".send-order-option").forEach(o => o.classList.remove("active"));
-  el.classList.add("active");
-  el.querySelector("input").checked = true;
+  applySendOrderSelection(order, el);
   updatePreviewContent();
+  saveSendDraft();
 }
 
 function getSendOrder() {
@@ -709,14 +1181,39 @@ function getSendOrder() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MEDIA TABS (Images / Documents)
+// MEDIA TABS (Images / Videos / Documents)
 // ═══════════════════════════════════════════════════════════════
 
 function switchMediaTab(tab, btn) {
-  document.querySelectorAll(".media-tab").forEach(t => t.classList.remove("active"));
-  document.querySelectorAll(".media-panel").forEach(p => p.classList.remove("active"));
-  btn.classList.add("active");
-  document.getElementById(`media-${tab}`).classList.add("active");
+  activateMediaTab(tab);
+  if (btn) btn.classList.add("active");
+  saveSendDraft();
+}
+
+function setupVideoUpload() {
+  const area = document.getElementById("videoUploadArea");
+  const input = document.getElementById("videoInput");
+  if (!area || !input) return;
+  area.addEventListener("click", () => input.click());
+  area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("drag-over"); });
+  area.addEventListener("dragleave", () => area.classList.remove("drag-over"));
+  area.addEventListener("drop", (e) => {
+    e.preventDefault();
+    area.classList.remove("drag-over");
+    if (e.dataTransfer.files.length > 0) uploadVideos(e.dataTransfer.files);
+  });
+  input.addEventListener("change", () => {
+    if (input.files.length > 0) { uploadVideos(input.files); input.value = ""; }
+  });
+}
+
+async function uploadVideos(files) {
+  await uploadMediaFiles(files, {
+    expectedKind: "video",
+    successMessagePrefix: "video",
+    targetList: uploadedVideos,
+    render: renderVideoPreview,
+  });
 }
 
 function setupDocUpload() {
@@ -737,23 +1234,29 @@ function setupDocUpload() {
 }
 
 async function uploadDocs(files) {
-  const fd = new FormData();
-  for (const f of files) fd.append("images", f); // uses same multer field name
-  try {
-    const res = await fetch("/api/images/upload", {
-      method: "POST",
-      body: fd,
-      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-    });
-    const data = await res.json();
-    if (data.success) {
-      uploadedDocs.push(...data.files);
-      renderDocPreview();
-      updatePreviewContent();
-    }
-  } catch (err) {
-    alert("Erro ao enviar documento: " + err.message);
-  }
+  await uploadMediaFiles(files, {
+    expectedKind: "document",
+    successMessagePrefix: "documento",
+    targetList: uploadedDocs,
+    render: renderDocPreview,
+  });
+}
+
+function renderVideoPreview() {
+  const container = document.getElementById("videoPreview");
+  if (!container) return;
+  container.innerHTML = "";
+  uploadedVideos.forEach((video, i) => {
+    const div = document.createElement("div");
+    div.className = "image-item";
+    div.innerHTML = `
+      <video src="${video.path}" muted playsinline preload="metadata" controls></video>
+      <button class="btn-remove" onclick="removeVideo(${i})" title="Remover"><i class="fas fa-times"></i></button>
+      <input type="text" class="caption-input" placeholder="Legenda..." value="${video.caption || ""}"
+        onchange="updateVideoCaption(${i}, this.value)" />
+    `;
+    container.appendChild(div);
+  });
 }
 
 function renderDocPreview() {
@@ -804,6 +1307,21 @@ async function removeDoc(index) {
   uploadedDocs.splice(index, 1);
   renderDocPreview();
   updatePreviewContent();
+  saveSendDraft();
+}
+
+function updateVideoCaption(index, value) {
+  uploadedVideos[index].caption = value;
+  saveSendDraft();
+}
+
+async function removeVideo(index) {
+  const video = uploadedVideos[index];
+  try { await authFetch(`/api/images/${video.id}`, { method: "DELETE" }); } catch { }
+  uploadedVideos.splice(index, 1);
+  renderVideoPreview();
+  updatePreviewContent();
+  saveSendDraft();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -827,6 +1345,8 @@ function loadTemplate() {
   if (!opt.value) return;
   document.getElementById("messageTemplate").value = decodeURIComponent(opt.dataset.msg || "");
   document.getElementById("charCount").textContent = document.getElementById("messageTemplate").value.length;
+  updatePreviewContent();
+  saveSendDraft();
 }
 
 async function saveTemplate() {
@@ -852,6 +1372,9 @@ async function deleteCurrentTemplate() {
   await authFetch(`/api/templates/${sel.value}`, { method: "DELETE" });
   await loadTemplateList();
   document.getElementById("messageTemplate").value = "";
+  document.getElementById("charCount").textContent = 0;
+  updatePreviewContent();
+  saveSendDraft();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -874,21 +1397,58 @@ function setupImageUpload() {
 }
 
 async function uploadImages(files) {
+  await uploadMediaFiles(files, {
+    expectedKind: "image",
+    successMessagePrefix: "imagem",
+    targetList: uploadedImages,
+    render: renderImagePreview,
+  });
+}
+
+async function uploadMediaFiles(files, { expectedKind, successMessagePrefix, targetList, render }) {
   const fd = new FormData();
   for (const f of files) fd.append("images", f);
+
   try {
     const res = await fetch("/api/images/upload", {
       method: "POST",
       body: fd,
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    const data = await res.json();
-    if (data.success) {
-      uploadedImages.push(...data.files);
-      renderImagePreview();
+    const data = await parseJsonResponse(res);
+
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error || `HTTP ${res.status}`);
     }
+
+    const receivedFiles = Array.isArray(data.files)
+      ? data.files.filter((file) => file.kind === expectedKind)
+      : [];
+
+    if (receivedFiles.length === 0) {
+      throw new Error(`Nenhum ${successMessagePrefix} valido foi recebido.`);
+    }
+
+    targetList.push(...receivedFiles);
+    render();
+    updatePreviewContent();
+    saveSendDraft();
   } catch (err) {
-    alert("Erro: " + err.message);
+    alert(`Erro ao enviar ${successMessagePrefix}: ` + err.message);
+  }
+}
+
+async function parseJsonResponse(res) {
+  const text = await res.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (text.includes("File too large")) {
+      throw new Error("Arquivo acima do limite permitido.");
+    }
+    throw new Error(`Resposta invalida do servidor (HTTP ${res.status}).`);
   }
 }
 
@@ -910,6 +1470,7 @@ function renderImagePreview() {
 
 function updateCaption(index, value) {
   uploadedImages[index].caption = value;
+  saveSendDraft();
 }
 
 async function removeImage(index) {
@@ -917,6 +1478,8 @@ async function removeImage(index) {
   try { await authFetch(`/api/images/${img.id}`, { method: "DELETE" }); } catch { }
   uploadedImages.splice(index, 1);
   renderImagePreview();
+  updatePreviewContent();
+  saveSendDraft();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1285,7 +1848,7 @@ async function sendMessages() {
   if (intervalMin > intervalMax) return alert("Intervalo mínimo > máximo.");
 
   const sendImage = document.getElementById("sendImageCheck").checked;
-  if (sendImage && uploadedImages.length === 0 && uploadedDocs.length === 0) return alert("Nenhuma mídia carregada.");
+  if (sendImage && !hasUploadedMedia()) return alert("Nenhuma mídia carregada.");
 
   const dailyLimit = parseInt(document.getElementById("dailyLimit").value) || 0;
   const useSchedule = document.getElementById("scheduleCheck").checked;
@@ -1301,11 +1864,8 @@ async function sendMessages() {
   // Reset UI
   jobStats = { sent: 0, failed: 0, total: activeCustomers.length };
   lastHistoryId = null;
-  document.getElementById("progressSection").style.display = "block";
   document.getElementById("logContainer").innerHTML = "";
-  document.getElementById("btnSend").style.display = "none";
-  document.getElementById("btnSchedule").style.display = "none";
-  document.getElementById("btnCancel").style.display = "inline-flex";
+  setSendingUiActive();
   updateProgressUI();
 
   document.querySelectorAll(".status-cell").forEach((cell) => {
@@ -1319,6 +1879,7 @@ async function sendMessages() {
         customers: activeCustomers,
         messageTemplate,
         images: uploadedImages,
+        videos: uploadedVideos,
         documents: uploadedDocs,
         interactiveData,
         sendOrder,
@@ -1355,16 +1916,20 @@ function finishSending() {
 
 function updateProgressUI() {
   const done = jobStats.sent + jobStats.failed;
-  const pct = jobStats.total > 0 ? Math.round((done / jobStats.total) * 100) : 0;
+  const pct = jobStats.total > 0 ? Math.min(Math.round((done / jobStats.total) * 100), 100) : 0;
   const bar = document.getElementById("progressBar");
   bar.style.width = pct + "%";
   bar.textContent = pct + "%";
   document.getElementById("statSent").textContent = jobStats.sent;
   document.getElementById("statFailed").textContent = jobStats.failed;
-  document.getElementById("statRemaining").textContent = jobStats.total - done;
+  document.getElementById("statRemaining").textContent = Math.max(jobStats.total - done, 0);
 }
 
 function updateTableStatus(index, status, error) {
+  if (typeof index === "number" && customers[index]) {
+    customers[index]._status = status;
+    customers[index]._statusText = status === "ok" ? "Enviado ✅" : "Erro ❌";
+  }
   const row = document.querySelector(`tr[data-index="${index}"]`);
   if (!row) return;
   const cell = row.querySelector(".status-cell");
@@ -1751,6 +2316,9 @@ async function confirmSchedule() {
   if (new Date(dt) <= new Date()) return alert("A data deve ser no futuro.");
 
   const activeCustomers = customers.map((c, i) => ({ ...c, _idx: i })).filter((c) => c.active);
+  const interactiveData = getInteractiveData();
+  const sendImage = document.getElementById("sendImageCheck").checked;
+  if (sendImage && !hasUploadedMedia()) return alert("Nenhuma mídia carregada.");
 
   try {
     const res = await authFetch("/api/schedules", {
@@ -1761,7 +2329,11 @@ async function confirmSchedule() {
         customers: activeCustomers,
         messageTemplate: document.getElementById("messageTemplate").value,
         images: uploadedImages,
-        sendImage: document.getElementById("sendImageCheck").checked,
+        videos: uploadedVideos,
+        documents: uploadedDocs,
+        interactiveData,
+        sendOrder: sendImage ? getSendOrder() : "text_first",
+        sendImage,
         intervalMin: parseInt(document.getElementById("intervalMin").value) * 1000,
         intervalMax: parseInt(document.getElementById("intervalMax").value) * 1000,
       }),

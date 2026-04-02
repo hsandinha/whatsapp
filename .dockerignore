@@ -1,0 +1,13 @@
+node_modules
+.wwebjs_auth
+.wwebjs_cache
+data
+uploads
+.env
+.env.*
+.git
+*.xlsx
+*.xls
+*.csv
+*.log
+.DS_Store

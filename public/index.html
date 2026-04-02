@@ -143,7 +143,7 @@
                         <p class="hint">Fora do horário, pausa e retoma no dia seguinte.</p>
                     </section>
 
-                    <!-- Imagens & Documentos -->
+                    <!-- Imagens, Vídeos & Documentos -->
                     <section class="card">
                         <h2><i class="fas fa-paperclip"></i> Mídias & Documentos</h2>
                         <div class="checkbox-group">
@@ -172,6 +172,9 @@
                                 <button class="media-tab active" onclick="switchMediaTab('images', this)">
                                     <i class="fas fa-image"></i> Imagens
                                 </button>
+                                <button class="media-tab" onclick="switchMediaTab('videos', this)">
+                                    <i class="fas fa-video"></i> Vídeos
+                                </button>
                                 <button class="media-tab" onclick="switchMediaTab('documents', this)">
                                     <i class="fas fa-file-pdf"></i> Documentos
                                 </button>
@@ -184,10 +187,19 @@
                                 </div>
                                 <div id="imagePreview" class="image-preview"></div>
                             </div>
+                            <div id="media-videos" class="media-panel">
+                                <div class="upload-area" id="videoUploadArea">
+                                    <i class="fas fa-video"></i>
+                                    <p>Arraste ou clique para enviar MP4 / MOV / WEBM</p>
+                                    <input type="file" id="videoInput"
+                                        accept=".mp4,.mov,.webm,.m4v,video/mp4,video/quicktime,video/webm" multiple hidden />
+                                </div>
+                                <div id="videoPreview" class="image-preview"></div>
+                            </div>
                             <div id="media-documents" class="media-panel">
                                 <div class="upload-area" id="docUploadArea">
                                     <i class="fas fa-file-upload"></i>
-                                    <p>Arraste ou clique para enviar PDF / DOC</p>
+                                    <p>Arraste ou clique para enviar PDF / DOC / XLS / ZIP</p>
                                     <input type="file" id="docInput"
                                         accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" multiple hidden />
                                 </div>

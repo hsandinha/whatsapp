@@ -1,12 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
 // WhatsApp Sender Pro v5.0 — Multi-User SaaS
 // ═══════════════════════════════════════════════════════════════
+require("dotenv").config();
+
 const express = require("express");
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const multer = require("multer");
 const QRCode = require("qrcode");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const crypto = require("crypto");
 const https = require("https");
 const { v4: uuidv4 } = require("uuid");
@@ -15,9 +17,9 @@ const { createClient } = require("@supabase/supabase-js");
 // ═══════════════════════════════════════════════════════════════
 // SUPABASE
 // ═══════════════════════════════════════════════════════════════
-const SUPABASE_URL = "https://piigfztyhymxrcrpavwq.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaWdmenR5aHlteHJjcnBhdndxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5OTkzNzQsImV4cCI6MjA4ODU3NTM3NH0.-nxRKReeM8blNKqw5kIEIHqolxRdOx800zwsmREOq4Y";
-const SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaWdmenR5aHlteHJjcnBhdndxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjk5OTM3NCwiZXhwIjoyMDg4NTc1Mzc0fQ.v5YY3v06aG9D7ggowdccqhg_fnYFerZ9vR53V1rr6so";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://piigfztyhymxrcrpavwq.supabase.co";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -41,7 +43,77 @@ async function isAdmin(userId, userEmail) {
 }
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
+let WhatsAppClientClass = null;
+let WhatsAppLocalAuthClass = null;
+let WhatsAppMessageMediaClass = null;
+
+function getWhatsAppClientDeps() {
+  if (!WhatsAppClientClass || !WhatsAppLocalAuthClass) {
+    // Lazy-load because puppeteer can delay package initialization and block the HTTP server boot.
+    WhatsAppClientClass = require("whatsapp-web.js/src/Client");
+    WhatsAppLocalAuthClass = require("whatsapp-web.js/src/authStrategies/LocalAuth");
+  }
+
+  return {
+    Client: WhatsAppClientClass,
+    LocalAuth: WhatsAppLocalAuthClass,
+  };
+}
+
+function getWhatsAppMessageMedia() {
+  if (!WhatsAppMessageMediaClass) {
+    WhatsAppMessageMediaClass = require("whatsapp-web.js/src/structures/MessageMedia");
+  }
+
+  return WhatsAppMessageMediaClass;
+}
+
+function resolveAuthDataDir() {
+  if (process.env.WWEBJS_AUTH_DIR) return path.resolve(process.env.WWEBJS_AUTH_DIR);
+  if (process.platform === "darwin") {
+    return path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "whatsapp-sender-pro",
+      ".wwebjs_auth"
+    );
+  }
+  if (process.platform === "win32") {
+    return path.join(
+      process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
+      "whatsapp-sender-pro",
+      ".wwebjs_auth"
+    );
+  }
+  return path.join(
+    process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"),
+    "whatsapp-sender-pro",
+    ".wwebjs_auth"
+  );
+}
+
+const LEGACY_AUTH_DIR = path.resolve(path.join(__dirname, ".wwebjs_auth"));
+const AUTH_DIR = resolveAuthDataDir();
+if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+
+function ensureAuthSessionDir(userId) {
+  const sessionName = `session-${userId}`;
+  const legacySessionDir = path.join(LEGACY_AUTH_DIR, sessionName);
+  const sessionDir = path.join(AUTH_DIR, sessionName);
+
+  if (
+    AUTH_DIR !== LEGACY_AUTH_DIR &&
+    fs.existsSync(legacySessionDir) &&
+    !fs.existsSync(sessionDir)
+  ) {
+    fs.cpSync(legacySessionDir, sessionDir, { recursive: true });
+    console.log(`[AUTH] Sessão migrada para diretório persistente (${userId})`);
+  }
+
+  return sessionDir;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // DATABASE (JSON files em /data/<userId>)
@@ -200,6 +272,11 @@ function getSession(userId) {
       currentJob: null,
       connectionState: "disconnected",
       phoneNumber: null,
+      lastDisconnectReason: null,
+      lastWaState: null,
+      reconnectTimer: null,
+      reconnectAttempts: 0,
+      autoReconnectEnabled: true,
     });
   }
   return sessions.get(userId);
@@ -210,6 +287,23 @@ function getSession(userId) {
 // ═══════════════════════════════════════════════════════════════
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// Em localhost, desabilita cache dos assets principais para evitar UI com JS antigo.
+app.use((req, res, next) => {
+  if (
+    req.path === "/" ||
+    req.path === "/app" ||
+    /\.(?:js|css|html)$/i.test(req.path)
+  ) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+  }
+  next();
+});
+
+app.get("/favicon.ico", (req, res) => {
+  res.status(204).end();
+});
+
 app.use("/uploads", express.static("uploads"));
 
 // ─── Supabase Auth Middleware ─────────────────────
@@ -284,6 +378,42 @@ app.use("/api/admin", adminMiddleware);
 // ═══════════════════════════════════════════════════════════════
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+const IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".gif", ".webp"]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v"]);
+const DOCUMENT_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".zip"]);
+const MAX_UPLOAD_FILES = 10;
+const MAX_UPLOAD_FILE_SIZE_MB = 100;
+const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
+
+function getUploadKind(filename = "") {
+  const ext = path.extname(filename).toLowerCase();
+  if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  if (VIDEO_EXTENSIONS.has(ext)) return "video";
+  if (DOCUMENT_EXTENSIONS.has(ext)) return "document";
+  return "unknown";
+}
+
+function mapUploadedFile(file) {
+  return {
+    id: file.filename,
+    name: file.originalname,
+    path: `/uploads/${file.filename}`,
+    fullPath: file.path,
+    caption: "",
+    kind: getUploadKind(file.originalname),
+  };
+}
+
+function mapStoredUpload(filename) {
+  return {
+    id: filename,
+    name: filename,
+    path: `/uploads/${filename}`,
+    fullPath: path.join(uploadsDir, filename),
+    caption: "",
+    kind: getUploadKind(filename),
+  };
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
@@ -292,13 +422,46 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    const ok = /jpeg|jpg|png|gif|webp|mp4|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip/.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    cb(null, ok);
+    if (getUploadKind(file.originalname) === "unknown") {
+      cb(new Error("Formato de arquivo nao suportado."));
+      return;
+    }
+    cb(null, true);
   },
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
 });
+
+function uploadMediaFiles(req, res, next) {
+  upload.array("images", MAX_UPLOAD_FILES)(req, res, (err) => {
+    if (!err) return next();
+
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({
+          success: false,
+          error: `Arquivo acima do limite de ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
+        });
+      }
+
+      if (err.code === "LIMIT_FILE_COUNT") {
+        return res.status(400).json({
+          success: false,
+          error: `Limite de ${MAX_UPLOAD_FILES} arquivos por envio.`,
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: err.message || "Falha ao processar upload.",
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: err.message || "Falha ao processar upload.",
+    });
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SSE (Server-Sent Events) — Per-user
@@ -344,10 +507,7 @@ app.get("/events", async (req, res) => {
   }, 25000);
 
   // Envia estado atual da sessão do usuário
-  const sess = getSession(userId);
-  res.write(
-    `event: session\ndata: ${JSON.stringify({ status: sess.connectionState, qr: sess.currentQR })}\n\n`
-  );
+  res.write(`event: session\ndata: ${JSON.stringify(getSessionPayload(userId))}\n\n`);
   req.on("close", () => {
     clearInterval(heartbeat);
     const clients = sseClients.get(userId);
@@ -362,6 +522,168 @@ function broadcast(userId, event, data) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   const clients = sseClients.get(userId);
   if (clients) for (const c of clients) c.write(msg);
+}
+
+function getSessionPayload(userId, extra = {}) {
+  const sess = getSession(userId);
+  return {
+    status: sess.connectionState,
+    qr: sess.currentQR,
+    phoneNumber: sess.phoneNumber || null,
+    reason: sess.lastDisconnectReason,
+    waState: sess.lastWaState,
+    reconnecting: !!sess.reconnectTimer,
+    ...extra,
+  };
+}
+
+function broadcastSession(userId, extra = {}) {
+  broadcast(userId, "session", getSessionPayload(userId, extra));
+}
+
+function getJobPayload(sess) {
+  if (!sess.currentJob) return { running: false };
+  const sent = sess.currentJob.sent || 0;
+  const failed = sess.currentJob.failed || 0;
+  const total = sess.currentJob.total || 0;
+  return {
+    running: true,
+    ...sess.currentJob,
+    sent,
+    failed,
+    total,
+    remaining: Math.max(total - sent - failed, 0),
+  };
+}
+
+function sanitizeJobResults(results) {
+  if (!Array.isArray(results)) return [];
+  return results.map((result) => ({
+    index: typeof result?.index === "number" ? result.index : undefined,
+    phone: result?.phone || "",
+    nome: result?.nome || "",
+    status: result?.status === "ok" ? "ok" : "error",
+    error: result?.error || "",
+  }));
+}
+
+function normalizeQueueProgress(queue) {
+  const total = Number.isFinite(queue?.total) && queue.total > 0
+    ? queue.total
+    : Array.isArray(queue?.customers)
+      ? queue.customers.length
+      : 0;
+  const currentIndex = Number.isFinite(queue?.currentIndex) && queue.currentIndex >= 0
+    ? queue.currentIndex
+    : 0;
+  const failed = Number.isFinite(queue?.failed) && queue.failed >= 0 ? queue.failed : 0;
+  const sent = Number.isFinite(queue?.sent) && queue.sent >= 0
+    ? queue.sent
+    : Math.max(currentIndex - failed, 0);
+
+  return {
+    total,
+    currentIndex,
+    sent,
+    failed,
+    results: sanitizeJobResults(queue?.results),
+  };
+}
+
+function createJobState({
+  jobId,
+  total,
+  sent = 0,
+  failed = 0,
+  results = [],
+  scheduleId = null,
+  messageTemplate = "",
+  images = [],
+  videos = [],
+  documents = [],
+  interactiveData = null,
+  sendOrder = "text_first",
+  intervalMin = 5000,
+  intervalMax = 15000,
+  sendImage = false,
+  dailyLimit = 0,
+  scheduleStart = null,
+  scheduleEnd = null,
+}) {
+  return {
+    id: jobId || uuidv4(),
+    total: Number.isFinite(total) ? total : 0,
+    sent: Number.isFinite(sent) ? sent : 0,
+    failed: Number.isFinite(failed) ? failed : 0,
+    cancelled: false,
+    results: sanitizeJobResults(results),
+    scheduleId,
+    messageTemplate: messageTemplate || "",
+    images: Array.isArray(images) ? images : [],
+    videos: Array.isArray(videos) ? videos : [],
+    documents: Array.isArray(documents) ? documents : [],
+    interactiveData: interactiveData || null,
+    sendOrder: sendOrder || "text_first",
+    intervalMin: Number.isFinite(intervalMin) ? intervalMin : 5000,
+    intervalMax: Number.isFinite(intervalMax) ? intervalMax : 15000,
+    sendImage: !!sendImage,
+    dailyLimit: parseInt(dailyLimit, 10) || 0,
+    scheduleStart: scheduleStart || null,
+    scheduleEnd: scheduleEnd || null,
+  };
+}
+
+function getQueuePayload(queue) {
+  if (!queue || !Array.isArray(queue.customers) || queue.customers.length === 0) {
+    return { running: false };
+  }
+
+  const progress = normalizeQueueProgress(queue);
+  return {
+    running: true,
+    id: queue.jobId || null,
+    total: progress.total,
+    sent: progress.sent,
+    failed: progress.failed,
+    results: progress.results,
+    currentIndex: progress.currentIndex,
+    messageTemplate: queue.messageTemplate || "",
+    images: Array.isArray(queue.images) ? queue.images : [],
+    videos: Array.isArray(queue.videos) ? queue.videos : [],
+    documents: Array.isArray(queue.documents) ? queue.documents : [],
+    interactiveData: queue.interactiveData || null,
+    sendOrder: queue.sendOrder || "text_first",
+    intervalMin: Number.isFinite(queue.intervalMin) ? queue.intervalMin : 5000,
+    intervalMax: Number.isFinite(queue.intervalMax) ? queue.intervalMax : 15000,
+    sendImage: !!queue.sendImage,
+    dailyLimit: parseInt(queue.dailyLimit, 10) || 0,
+    scheduleStart: queue.scheduleStart || null,
+    scheduleEnd: queue.scheduleEnd || null,
+    remaining: Math.max(progress.total - progress.sent - progress.failed, 0),
+  };
+}
+
+function getCurrentJobPayload(userId) {
+  const sess = getSession(userId);
+  const queue = userDb(userId).getQueue();
+  const queuePayload = getQueuePayload(queue);
+
+  if (!sess.currentJob) return queuePayload;
+
+  const sent = sess.currentJob.sent || 0;
+  const failed = sess.currentJob.failed || 0;
+  const total = sess.currentJob.total || queuePayload.total || 0;
+
+  return {
+    ...queuePayload,
+    ...sess.currentJob,
+    sent,
+    failed,
+    total,
+    results: sanitizeJobResults(sess.currentJob.results || queuePayload.results),
+    remaining: Math.max(total - sent - failed, 0),
+    running: true,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -425,11 +747,80 @@ function parseCSV(text) {
   return result;
 }
 
+function clearReconnectTimer(sess) {
+  if (!sess.reconnectTimer) return;
+  clearTimeout(sess.reconnectTimer);
+  sess.reconnectTimer = null;
+}
+
+function normalizeStateValue(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return value.message;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function shouldAutoReconnect(reason) {
+  return reason === "TIMEOUT" || reason === "CONFLICT";
+}
+
+function scheduleReconnect(userId, reason) {
+  const sess = getSession(userId);
+  if (
+    !sess.autoReconnectEnabled ||
+    sess.reconnectTimer ||
+    sess.isReady ||
+    sess.connectionState === "connecting" ||
+    sess.connectionState === "qr" ||
+    !shouldAutoReconnect(reason)
+  ) {
+    return;
+  }
+
+  const attempt = sess.reconnectAttempts + 1;
+  const delayMs = Math.min(attempt * 5000, 30000);
+  sess.reconnectAttempts = attempt;
+  sess.connectionState = "reconnecting";
+  console.warn(
+    `[RECONNECT] Sessão ${userId} caiu por ${reason}. Nova tentativa em ${delayMs / 1000}s`
+  );
+  broadcastSession(userId, { status: "reconnecting", attempt, delayMs });
+
+  sess.reconnectTimer = setTimeout(async () => {
+    sess.reconnectTimer = null;
+    const latest = getSession(userId);
+    if (
+      !latest.autoReconnectEnabled ||
+      latest.isReady ||
+      latest.connectionState === "connecting" ||
+      latest.connectionState === "qr"
+    ) {
+      return;
+    }
+
+    try {
+      await initializeClient(userId);
+    } catch (err) {
+      console.error(`[RECONNECT] Erro ao reconectar (${userId}):`, err.message || err);
+      scheduleReconnect(userId, reason);
+    }
+  }, delayMs);
+}
+
 // ═══════════════════════════════════════════════════════════════
 // WHATSAPP CLIENT — Per-user
 // ═══════════════════════════════════════════════════════════════
 async function initializeClient(userId) {
   const sess = getSession(userId);
+  const sessionDir = ensureAuthSessionDir(userId);
+  const { Client, LocalAuth } = getWhatsAppClientDeps();
+
+  clearReconnectTimer(sess);
+  sess.autoReconnectEnabled = true;
 
   if (sess.client) {
     try { await sess.client.destroy(); } catch (e) {
@@ -441,7 +832,6 @@ async function initializeClient(userId) {
   }
 
   // Mata processos Chromium zumbis que usam a sessão deste usuário
-  const sessionDir = path.join(__dirname, ".wwebjs_auth", `session-${userId}`);
   try {
     const { execSync } = require("child_process");
     if (process.platform === "win32") {
@@ -454,12 +844,20 @@ async function initializeClient(userId) {
     }
   } catch { }
 
-  // Remove TODOS os lock files do Chromium (SingletonLock, SingletonSocket, SingletonCookie)
-  const defaultDir = path.join(sessionDir, "Default");
-  for (const lockName of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
-    const lockFile = path.join(defaultDir, lockName);
+  // Remove locks órfãos do Chromium. Os Singleton* ficam na raiz do perfil.
+  const lockCandidates = [
+    path.join(sessionDir, "SingletonLock"),
+    path.join(sessionDir, "SingletonSocket"),
+    path.join(sessionDir, "SingletonCookie"),
+    path.join(sessionDir, "DevToolsActivePort"),
+    path.join(sessionDir, "Default", "LOCK"),
+  ];
+  for (const lockFile of lockCandidates) {
     if (fs.existsSync(lockFile)) {
-      try { fs.unlinkSync(lockFile); console.log(`[INIT] Removido ${lockName} (${userId})`); } catch { }
+      try {
+        fs.unlinkSync(lockFile);
+        console.log(`[INIT] Removido lock órfão (${userId}): ${path.basename(lockFile)}`);
+      } catch { }
     }
   }
 
@@ -467,15 +865,19 @@ async function initializeClient(userId) {
   await new Promise((r) => setTimeout(r, 1000));
 
   sess.connectionState = "connecting";
-  broadcast(userId, "session", { status: "connecting" });
+  sess.isReady = false;
+  sess.currentQR = null;
+  sess.phoneNumber = null;
+  broadcastSession(userId, { status: "connecting" });
 
   sess.client = new Client({
     authStrategy: new LocalAuth({
       clientId: userId,
-      dataPath: path.join(__dirname, ".wwebjs_auth"),
+      dataPath: AUTH_DIR,
     }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -484,67 +886,91 @@ async function initializeClient(userId) {
         "--no-first-run",
         "--no-zygote",
         "--disable-gpu",
+        "--single-process",
       ],
     },
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 5000,
     webVersionCache: {
-      type: "remote",
-      remotePath:
-        "https://raw.githubusercontent.com/nicokant/nicokant.github.io/refs/heads/main/AltWWebVersions/",
+      type: "local",
     },
   });
 
   sess.client.on("qr", async (qr) => {
     sess.connectionState = "qr";
+    sess.lastDisconnectReason = null;
     try { sess.currentQR = await QRCode.toDataURL(qr, { width: 300, margin: 2 }); } catch { sess.currentQR = null; }
-    broadcast(userId, "session", { status: "qr", qr: sess.currentQR });
+    broadcastSession(userId, { status: "qr" });
   });
 
   sess.client.on("loading_screen", (percent, message) => {
-    broadcast(userId, "session", { status: "loading", percent, message });
+    broadcastSession(userId, { status: "loading", percent, message });
   });
 
   sess.client.on("authenticated", () => {
     sess.connectionState = "connecting";
     sess.currentQR = null;
-    broadcast(userId, "session", { status: "authenticated" });
+    broadcastSession(userId, { status: "authenticated" });
   });
 
   sess.client.on("auth_failure", (msg) => {
+    clearReconnectTimer(sess);
     sess.connectionState = "disconnected";
     sess.isReady = false;
     sess.currentQR = null;
-    broadcast(userId, "session", { status: "auth_failure", error: msg });
+    sess.phoneNumber = null;
+    sess.lastDisconnectReason = normalizeStateValue(msg) || "AUTH_FAILURE";
+    console.error(`[WA AUTH FAILURE] ${userId}:`, sess.lastDisconnectReason);
+    broadcastSession(userId, { status: "auth_failure", error: msg });
+  });
+
+  sess.client.on("change_state", (state) => {
+    sess.lastWaState = normalizeStateValue(state);
+    console.log(`[WA STATE] ${userId}: ${sess.lastWaState}`);
+    broadcastSession(userId);
   });
 
   sess.client.on("ready", () => {
     console.log(`✅ WhatsApp pronto para usuário ${userId}`);
+    clearReconnectTimer(sess);
     sess.connectionState = "connected";
     sess.isReady = true;
     sess.currentQR = null;
+    sess.lastDisconnectReason = null;
+    sess.lastWaState = "CONNECTED";
+    sess.reconnectAttempts = 0;
     // Captura o número de telefone conectado
     try {
       const wid = sess.client.info && sess.client.info.wid;
       sess.phoneNumber = wid ? wid.user : null;
     } catch { sess.phoneNumber = null; }
     console.log(`📱 Número conectado: ${sess.phoneNumber}`);
-    broadcast(userId, "session", { status: "connected", phoneNumber: sess.phoneNumber });
+    broadcastSession(userId, { status: "connected" });
     // Tenta retomar fila pendente do usuário
     resumePendingQueue(userId);
   });
 
   sess.client.on("disconnected", (reason) => {
+    const normalizedReason = normalizeStateValue(reason);
+    clearReconnectTimer(sess);
     sess.connectionState = "disconnected";
     sess.isReady = false;
     sess.currentQR = null;
     sess.phoneNumber = null;
-    broadcast(userId, "session", { status: "disconnected", reason });
+    sess.lastDisconnectReason = normalizedReason;
+    sess.lastWaState = normalizedReason || sess.lastWaState;
+    console.warn(`[WA DISCONNECTED] ${userId}:`, normalizedReason);
+    broadcastSession(userId, { status: "disconnected" });
+    scheduleReconnect(userId, normalizedReason);
   });
 
   sess.client.initialize().catch((err) => {
     console.error(`Erro ao inicializar (${userId}):`, err);
+    clearReconnectTimer(sess);
     sess.connectionState = "disconnected";
     sess.isReady = false;
-    broadcast(userId, "session", { status: "error", error: err.message });
+    sess.lastDisconnectReason = normalizeStateValue(err);
+    broadcastSession(userId, { status: "error", error: err.message });
   });
 }
 
@@ -884,29 +1310,44 @@ app.get("/api/admin/stats", async (req, res) => {
 app.post("/api/session/start", async (req, res) => {
   const sess = getSession(req.userId);
   if (sess.isReady) return res.json({ success: true, message: "Já conectado!" });
-  if (sess.connectionState === "connecting" || sess.connectionState === "qr")
+  if (sess.connectionState === "connecting" || sess.connectionState === "qr" || sess.connectionState === "reconnecting")
     return res.json({ success: true, message: "Já conectando." });
-  try {
-    await initializeClient(req.userId);
-    res.json({ success: true, message: "Iniciando conexão..." });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+
+  clearReconnectTimer(sess);
+  sess.autoReconnectEnabled = true;
+  sess.reconnectAttempts = 0;
+
+  res.json({ success: true, message: "Iniciando conexão..." });
+
+  setImmediate(async () => {
+    try {
+      await initializeClient(req.userId);
+    } catch (err) {
+      const latest = getSession(req.userId);
+      latest.connectionState = "disconnected";
+      latest.isReady = false;
+      latest.currentQR = null;
+      latest.phoneNumber = null;
+      latest.lastDisconnectReason = normalizeStateValue(err) || "START_FAILURE";
+      console.error(`[SESSION START] Erro ao iniciar (${req.userId}):`, err);
+      broadcastSession(req.userId, { status: "error", error: err.message });
+    }
+  });
 });
 
 app.get("/api/session/status", (req, res) => {
   const sess = getSession(req.userId);
   res.json({
-    status: sess.connectionState,
+    ...getSessionPayload(req.userId),
     loggedIn: sess.isReady,
-    qr: sess.currentQR,
     jobRunning: !!sess.currentJob,
-    phoneNumber: sess.phoneNumber || null,
   });
 });
 
 app.post("/api/session/close", async (req, res) => {
   const sess = getSession(req.userId);
+  clearReconnectTimer(sess);
+  sess.autoReconnectEnabled = false;
   try {
     if (sess.client) {
       await sess.client.logout();
@@ -917,16 +1358,37 @@ app.post("/api/session/close", async (req, res) => {
   sess.connectionState = "disconnected";
   sess.isReady = false;
   sess.currentQR = null;
-  broadcast(req.userId, "session", { status: "disconnected" });
+  sess.phoneNumber = null;
+  sess.lastDisconnectReason = null;
+  sess.lastWaState = null;
+  broadcastSession(req.userId, { status: "disconnected" });
   res.json({ success: true });
 });
 
 app.post("/api/session/restart", async (req, res) => {
   const sess = getSession(req.userId);
+  clearReconnectTimer(sess);
+  sess.autoReconnectEnabled = true;
+  sess.reconnectAttempts = 0;
   sess.connectionState = "disconnected";
   sess.isReady = false;
-  await initializeClient(req.userId);
+
   res.json({ success: true, message: "Reconectando..." });
+
+  setImmediate(async () => {
+    try {
+      await initializeClient(req.userId);
+    } catch (err) {
+      const latest = getSession(req.userId);
+      latest.connectionState = "disconnected";
+      latest.isReady = false;
+      latest.currentQR = null;
+      latest.phoneNumber = null;
+      latest.lastDisconnectReason = normalizeStateValue(err) || "RESTART_FAILURE";
+      console.error(`[SESSION RESTART] Erro ao reiniciar (${req.userId}):`, err);
+      broadcastSession(req.userId, { status: "error", error: err.message });
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1143,28 +1605,26 @@ app.get("/api/analytics/export-detailed", (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// ROTAS — IMAGENS
+// ROTAS — MIDIAS
 // ═══════════════════════════════════════════════════════════════
-app.post("/api/images/upload", upload.array("images", 10), (req, res) => {
-  const files = req.files.map((f) => ({
-    id: f.filename,
-    name: f.originalname,
-    path: `/uploads/${f.filename}`,
-    fullPath: f.path,
-    caption: "",
-  }));
-  res.json({ success: true, files });
+app.post("/api/images/upload", uploadMediaFiles, (req, res) => {
+  const files = Array.isArray(req.files) ? req.files.map(mapUploadedFile) : [];
+  if (!files.length) {
+    return res.status(400).json({
+      success: false,
+      error: "Nenhum arquivo valido foi enviado.",
+    });
+  }
+  res.json({
+    success: true,
+    files,
+    maxFileSizeMb: MAX_UPLOAD_FILE_SIZE_MB,
+  });
 });
 
 app.get("/api/images", (req, res) => {
   if (!fs.existsSync(uploadsDir)) return res.json({ success: true, files: [] });
-  const files = fs.readdirSync(uploadsDir).map((f) => ({
-    id: f,
-    name: f,
-    path: `/uploads/${f}`,
-    fullPath: path.join(uploadsDir, f),
-    caption: "",
-  }));
+  const files = fs.readdirSync(uploadsDir).map(mapStoredUpload);
   res.json({ success: true, files });
 });
 
@@ -1234,6 +1694,7 @@ app.post("/api/send", async (req, res) => {
     customers,
     messageTemplate,
     images,
+    videos,
     documents,
     interactiveData,
     sendOrder,
@@ -1250,14 +1711,24 @@ app.post("/api/send", async (req, res) => {
     return res.status(400).json({ success: false, error: "Nenhum contato." });
 
   const jobId = uuidv4();
-  sess.currentJob = {
-    id: jobId,
+  const scheduleStartValue = useSchedule ? scheduleStart : null;
+  const scheduleEndValue = useSchedule ? scheduleEnd : null;
+  sess.currentJob = createJobState({
+    jobId,
     total: customers.length,
-    sent: 0,
-    failed: 0,
-    cancelled: false,
-    results: [],
-  };
+    messageTemplate,
+    images,
+    videos: videos || [],
+    documents: documents || [],
+    interactiveData: interactiveData || null,
+    sendOrder: sendOrder || "text_first",
+    intervalMin,
+    intervalMax,
+    sendImage,
+    dailyLimit,
+    scheduleStart: scheduleStartValue,
+    scheduleEnd: scheduleEndValue,
+  });
 
   res.json({ success: true, jobId, total: customers.length });
 
@@ -1266,6 +1737,7 @@ app.post("/api/send", async (req, res) => {
     customers,
     messageTemplate,
     images,
+    videos: videos || [],
     documents: documents || [],
     interactiveData: interactiveData || null,
     sendOrder: sendOrder || "text_first",
@@ -1273,9 +1745,13 @@ app.post("/api/send", async (req, res) => {
     intervalMax,
     sendImage,
     dailyLimit,
-    scheduleStart: useSchedule ? scheduleStart : null,
-    scheduleEnd: useSchedule ? scheduleEnd : null,
+    scheduleStart: scheduleStartValue,
+    scheduleEnd: scheduleEndValue,
     currentIndex: 0,
+    total: customers.length,
+    sent: 0,
+    failed: 0,
+    results: [],
     jobId,
   });
 
@@ -1284,6 +1760,7 @@ app.post("/api/send", async (req, res) => {
     customers,
     messageTemplate,
     images,
+    videos || [],
     documents || [],
     interactiveData || null,
     sendOrder || "text_first",
@@ -1292,8 +1769,12 @@ app.post("/api/send", async (req, res) => {
     sendImage,
     {
       dailyLimit: parseInt(dailyLimit) || 0,
-      scheduleStart: useSchedule ? scheduleStart : null,
-      scheduleEnd: useSchedule ? scheduleEnd : null,
+      scheduleStart: scheduleStartValue,
+      scheduleEnd: scheduleEndValue,
+    },
+    {
+      queueCustomers: customers,
+      indexOffset: 0,
     }
   );
 });
@@ -1309,8 +1790,7 @@ app.post("/api/send/cancel", (req, res) => {
 });
 
 app.get("/api/send/status", (req, res) => {
-  const sess = getSession(req.userId);
-  res.json(sess.currentJob ? { running: true, ...sess.currentJob } : { running: false });
+  res.json(getCurrentJobPayload(req.userId));
 });
 
 // ─── Horário de trabalho (per-user) ──────────────
@@ -1350,10 +1830,13 @@ async function waitForSchedule(userId, start, end) {
 }
 
 // ─── Processamento principal (per-user) ───────────
-async function processMessages(userId, customers, messageTemplate, images, documents, interactiveData, sendOrder, intervalMin, intervalMax, sendImage, config = {}) {
+async function processMessages(userId, customers, messageTemplate, images, videos, documents, interactiveData, sendOrder, intervalMin, intervalMax, sendImage, config = {}, runtime = {}) {
   const sess = getSession(userId);
   const db = userDb(userId);
   const { dailyLimit = 0, scheduleStart, scheduleEnd } = config;
+  const queueCustomers = Array.isArray(runtime.queueCustomers) && runtime.queueCustomers.length > 0 ? runtime.queueCustomers : customers;
+  const indexOffset = Number.isFinite(runtime.indexOffset) ? runtime.indexOffset : 0;
+  const total = sess.currentJob?.total || queueCustomers.length || customers.length;
 
   for (let i = 0; i < customers.length; i++) {
     if (sess.currentJob.cancelled) {
@@ -1394,6 +1877,7 @@ async function processMessages(userId, customers, messageTemplate, images, docum
     }
 
     const customer = customers[i];
+    const processedIndex = indexOffset + i;
     const origIdx = customer._idx !== undefined ? customer._idx : i;
 
     // Substituir variáveis dinâmicas
@@ -1405,26 +1889,43 @@ async function processMessages(userId, customers, messageTemplate, images, docum
 
     broadcast(userId, "job", {
       type: "progress",
-      current: i + 1,
-      total: customers.length,
+      current: processedIndex + 1,
+      total,
       customer: customer.nome,
       phone: customer.whatsapp,
+      sent: sess.currentJob.sent,
+      failed: sess.currentJob.failed,
+      remaining: Math.max(total - sess.currentJob.sent - sess.currentJob.failed, 0),
     });
 
     try {
-      await sendSingleMessage(userId, customer.whatsapp, msg, sendImage ? images : [], sendImage ? documents : [], interactiveData, sendOrder);
+      await sendSingleMessage(
+        userId,
+        customer.whatsapp,
+        msg,
+        sendImage ? images : [],
+        sendImage ? videos : [],
+        sendImage ? documents : [],
+        interactiveData,
+        sendOrder
+      );
       sess.currentJob.sent++;
       db.incrementDaily();
-      sess.currentJob.results.push({ phone: customer.whatsapp, nome: customer.nome, status: "ok" });
+      sess.currentJob.results.push({ index: origIdx, phone: customer.whatsapp, nome: customer.nome, status: "ok" });
       broadcast(userId, "job", {
         type: "sent",
         index: origIdx,
         phone: customer.whatsapp,
         nome: customer.nome,
+        sent: sess.currentJob.sent,
+        failed: sess.currentJob.failed,
+        total,
+        remaining: Math.max(total - sess.currentJob.sent - sess.currentJob.failed, 0),
       });
     } catch (err) {
       sess.currentJob.failed++;
       sess.currentJob.results.push({
+        index: origIdx,
         phone: customer.whatsapp,
         nome: customer.nome,
         status: "error",
@@ -1436,14 +1937,19 @@ async function processMessages(userId, customers, messageTemplate, images, docum
         phone: customer.whatsapp,
         nome: customer.nome,
         error: err.message,
+        sent: sess.currentJob.sent,
+        failed: sess.currentJob.failed,
+        total,
+        remaining: Math.max(total - sess.currentJob.sent - sess.currentJob.failed, 0),
       });
     }
 
     // Atualiza fila
     db.saveQueue({
-      customers,
+      customers: queueCustomers,
       messageTemplate,
       images,
+      videos,
       documents,
       interactiveData,
       sendOrder,
@@ -1453,7 +1959,11 @@ async function processMessages(userId, customers, messageTemplate, images, docum
       dailyLimit,
       scheduleStart,
       scheduleEnd,
-      currentIndex: i + 1,
+      currentIndex: processedIndex + 1,
+      total,
+      sent: sess.currentJob.sent,
+      failed: sess.currentJob.failed,
+      results: sess.currentJob.results,
       jobId: sess.currentJob.id,
     });
 
@@ -1465,33 +1975,52 @@ async function processMessages(userId, customers, messageTemplate, images, docum
     }
   }
 
+  const finishedJob = sess.currentJob;
+  if (!finishedJob) return;
+
   // Salva no histórico
   const dailyStats = db.getDailyStats();
   const historyEntry = {
     messagePreview: (messageTemplate || "").slice(0, 80),
-    total: customers.length,
-    sent: sess.currentJob.sent,
-    failed: sess.currentJob.failed,
-    results: sess.currentJob.results,
+    messageTemplate,
+    images,
+    videos,
+    documents,
+    interactiveData,
+    sendOrder,
+    intervalMin,
+    intervalMax,
+    sendImage,
+    dailyLimit,
+    scheduleStart,
+    scheduleEnd,
+    total: finishedJob.total || total,
+    sent: finishedJob.sent,
+    failed: finishedJob.failed,
+    results: finishedJob.results,
+    status: finishedJob.cancelled ? "cancelled" : "completed",
     dailySent: dailyStats.sent,
   };
   db.saveHistory(historyEntry);
 
-  broadcast(userId, "job", {
-    type: "completed",
-    sent: sess.currentJob.sent,
-    failed: sess.currentJob.failed,
-    total: customers.length,
-    historyId: historyEntry.id,
-    dailySent: dailyStats.sent,
-  });
+  if (!finishedJob.cancelled) {
+    broadcast(userId, "job", {
+      type: "completed",
+      sent: finishedJob.sent,
+      failed: finishedJob.failed,
+      total: finishedJob.total || total,
+      historyId: historyEntry.id,
+      dailySent: dailyStats.sent,
+    });
+  }
 
   db.clearQueue();
   sess.currentJob = null;
 }
 
-async function sendSingleMessage(userId, phone, message, images, documents, interactiveData, sendOrder) {
+async function sendSingleMessage(userId, phone, message, images, videos, documents, interactiveData, sendOrder) {
   const sess = getSession(userId);
+  const MessageMedia = getWhatsAppMessageMedia();
   const chatId = formatPhone(phone);
   let numberId;
   try {
@@ -1548,6 +2077,20 @@ async function sendSingleMessage(userId, phone, message, images, documents, inte
       }
     }
 
+    if (videos && videos.length > 0) {
+      for (const video of videos) {
+        const videoPath = video.fullPath || path.join(__dirname, "uploads", video.id);
+        if (!fs.existsSync(videoPath)) continue;
+        const media = MessageMedia.fromFilePath(videoPath);
+        if (video.caption && video.caption.trim()) {
+          await sess.client.sendMessage(validChatId, media, { caption: video.caption });
+        } else {
+          await sess.client.sendMessage(validChatId, media);
+        }
+        await delay(1500);
+      }
+    }
+
     if (documents && documents.length > 0) {
       for (const doc of documents) {
         const docPath = doc.fullPath || path.join(__dirname, "uploads", doc.id);
@@ -1579,34 +2122,49 @@ function resumePendingQueue(userId) {
   const queue = db.getQueue();
   if (!queue || !queue.customers) return;
 
-  const remaining = queue.customers.slice(queue.currentIndex || 0);
+  const progress = normalizeQueueProgress(queue);
+  const remaining = queue.customers.slice(progress.currentIndex);
   if (remaining.length === 0) {
     db.clearQueue();
     return;
   }
 
   console.log(`📋 Retomando fila (${userId}): ${remaining.length} mensagens pendentes`);
+  sess.currentJob = createJobState({
+    jobId: queue.jobId || uuidv4(),
+    total: progress.total,
+    sent: progress.sent,
+    failed: progress.failed,
+    results: progress.results,
+    messageTemplate: queue.messageTemplate,
+    images: queue.images,
+    videos: queue.videos || [],
+    documents: queue.documents || [],
+    interactiveData: queue.interactiveData || null,
+    sendOrder: queue.sendOrder || "text_first",
+    intervalMin: queue.intervalMin,
+    intervalMax: queue.intervalMax,
+    sendImage: queue.sendImage,
+    dailyLimit: queue.dailyLimit,
+    scheduleStart: queue.scheduleStart,
+    scheduleEnd: queue.scheduleEnd,
+  });
+
   broadcast(userId, "job", {
     type: "resuming",
     message: `Retomando ${remaining.length} envios pendentes...`,
-    remaining: remaining.length,
+    remaining: Math.max(progress.total - progress.sent - progress.failed, 0),
+    total: progress.total,
+    sent: progress.sent,
+    failed: progress.failed,
   });
-
-  const jobId = queue.jobId || uuidv4();
-  sess.currentJob = {
-    id: jobId,
-    total: remaining.length,
-    sent: 0,
-    failed: 0,
-    cancelled: false,
-    results: [],
-  };
 
   processMessages(
     userId,
     remaining,
     queue.messageTemplate,
     queue.images,
+    queue.videos || [],
     queue.documents || [],
     queue.interactiveData || null,
     queue.sendOrder || "text_first",
@@ -1617,6 +2175,10 @@ function resumePendingQueue(userId) {
       dailyLimit: parseInt(queue.dailyLimit) || 0,
       scheduleStart: queue.scheduleStart,
       scheduleEnd: queue.scheduleEnd,
+    },
+    {
+      queueCustomers: queue.customers,
+      indexOffset: progress.currentIndex,
     }
   );
 }
@@ -1673,7 +2235,20 @@ app.get("/api/schedules", (req, res) => {
 
 app.post("/api/schedules", (req, res) => {
   const db = userDb(req.userId);
-  const { name, scheduledAt, customers, messageTemplate, images, sendImage, intervalMin, intervalMax } = req.body;
+  const {
+    name,
+    scheduledAt,
+    customers,
+    messageTemplate,
+    images,
+    videos,
+    documents,
+    interactiveData,
+    sendOrder,
+    sendImage,
+    intervalMin,
+    intervalMax,
+  } = req.body;
   if (!scheduledAt || !customers?.length)
     return res.status(400).json({ success: false, error: "Data e contatos obrigatórios." });
 
@@ -1683,6 +2258,10 @@ app.post("/api/schedules", (req, res) => {
     customers,
     messageTemplate,
     images: images || [],
+    videos: videos || [],
+    documents: documents || [],
+    interactiveData: interactiveData || null,
+    sendOrder: sendOrder || "text_first",
     sendImage: !!sendImage,
     intervalMin: intervalMin || 5000,
     intervalMax: intervalMax || 15000,
@@ -1716,15 +2295,20 @@ setInterval(() => {
         db.saveSchedule(s);
 
         const jobId = uuidv4();
-        sess.currentJob = {
-          id: jobId,
+        sess.currentJob = createJobState({
+          jobId,
           total: s.customers.length,
-          sent: 0,
-          failed: 0,
-          cancelled: false,
-          results: [],
           scheduleId: s.id,
-        };
+          messageTemplate: s.messageTemplate,
+          images: s.images || [],
+          videos: s.videos || [],
+          documents: s.documents || [],
+          interactiveData: s.interactiveData || null,
+          sendOrder: s.sendOrder || "text_first",
+          intervalMin: s.intervalMin || 5000,
+          intervalMax: s.intervalMax || 15000,
+          sendImage: !!s.sendImage,
+        });
 
         broadcast(userId, "job", {
           type: "schedule_started",
@@ -1736,11 +2320,19 @@ setInterval(() => {
           userId,
           s.customers,
           s.messageTemplate,
-          s.images,
-          s.intervalMin,
-          s.intervalMax,
-          s.sendImage,
-          {}
+          s.images || [],
+          s.videos || [],
+          s.documents || [],
+          s.interactiveData || null,
+          s.sendOrder || "text_first",
+          s.intervalMin || 5000,
+          s.intervalMax || 15000,
+          !!s.sendImage,
+          {},
+          {
+            queueCustomers: s.customers,
+            indexOffset: 0,
+          }
         ).then(() => {
           s.status = "completed";
           s.completedAt = new Date().toISOString();
@@ -1809,6 +2401,7 @@ app.post("/api/validate-numbers", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 async function destroyAllSessions() {
   for (const [userId, sess] of sessions) {
+    clearReconnectTimer(sess);
     if (sess.client) {
       try { await sess.client.destroy(); } catch { }
     }
@@ -1831,7 +2424,7 @@ process.on("SIGTERM", async () => {
 (function cleanupZombieBrowsers() {
   try {
     const { execSync } = require("child_process");
-    const authDir = path.join(__dirname, ".wwebjs_auth");
+    const authDir = AUTH_DIR;
     if (process.platform === "win32") {
       // Windows: remove lock files via PowerShell
       execSync(`powershell -Command "Get-ChildItem -Path '${authDir}' -Recurse -Include SingletonLock,SingletonSocket,SingletonCookie -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"`, { timeout: 5000, shell: true });

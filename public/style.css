@@ -821,6 +821,15 @@ a.dropdown-item:hover {
     border: 2px solid var(--border);
 }
 
+.image-item video {
+    width: 90px;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 2px solid var(--border);
+    background: #000;
+}
+
 .image-item .btn-remove {
     position: absolute;
     top: -6px;
@@ -2024,6 +2033,10 @@ textarea:focus {
     border-radius: 6px;
     object-fit: cover;
     border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+video.preview-media-item {
+    background: #000;
 }
 
 .preview-doc-item {
