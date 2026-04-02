@@ -438,7 +438,7 @@ function setupEventSource() {
   if (eventSource) eventSource.close();
   if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
 
-  const tokenParam = authToken ? `?token=${authToken}` : "";
+  const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
   eventSource = new EventSource(`/events${tokenParam}`);
 
   eventSource.addEventListener("session", (e) => {

@@ -609,13 +609,20 @@ app.get("/events", async (req, res) => {
   if (token) {
     try {
       const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (error || !user) return res.status(401).json({ error: "Token inválido" });
+      if (error || !user) {
+        console.warn("[SSE] Token inválido:", error?.message || "sem usuário");
+        return res.status(401).json({ error: "Token inválido" });
+      }
       userId = user.id;
     } catch {
+      console.warn("[SSE] Erro ao validar token");
       return res.status(401).json({ error: "Erro ao validar" });
     }
   }
-  if (!userId) return res.status(401).json({ error: "Token obrigatório" });
+  if (!userId) {
+    console.warn("[SSE] Token obrigatório ausente");
+    return res.status(401).json({ error: "Token obrigatório" });
+  }
 
   // Desabilita timeouts para manter a conexão SSE viva indefinidamente
   req.setTimeout(0);
@@ -624,16 +631,19 @@ app.get("/events", async (req, res) => {
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "no-cache, no-transform",
+    "Content-Encoding": "none",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
 
   // Desabilita buffering do Nagle para envio imediato
   if (req.socket) req.socket.setNoDelay(true);
 
   if (!sseClients.has(userId)) sseClients.set(userId, new Set());
   sseClients.get(userId).add(res);
+  console.log(`[SSE] Conectado: ${userId}`);
 
   // Heartbeat a cada 25s para manter a conexão viva
   const heartbeat = setInterval(() => {
@@ -641,6 +651,7 @@ app.get("/events", async (req, res) => {
   }, 25000);
 
   // Envia estado atual da sessão do usuário
+  res.write("retry: 5000\n\n");
   res.write(`event: session\ndata: ${JSON.stringify(getSessionPayload(userId))}\n\n`);
   req.on("close", () => {
     clearInterval(heartbeat);
@@ -649,6 +660,7 @@ app.get("/events", async (req, res) => {
       clients.delete(res);
       if (clients.size === 0) sseClients.delete(userId);
     }
+    console.log(`[SSE] Fechado: ${userId}`);
   });
 });
 
