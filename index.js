@@ -44,6 +44,7 @@ async function isAdmin(userId, userEmail) {
 
 const app = express();
 const port = process.env.PORT || 3001;
+const host = process.env.HOST || "0.0.0.0";
 let WhatsAppClientClass = null;
 let WhatsAppLocalAuthClass = null;
 let WhatsAppMessageMediaClass = null;
@@ -944,6 +945,27 @@ function normalizeStateValue(value) {
   }
 }
 
+function syncConnectionStateFromWaState(sess, state) {
+  switch (state) {
+    case "OPENING":
+    case "PAIRING":
+    case "CONNECTED":
+      if (!sess.isReady) {
+        sess.connectionState = "connecting";
+        sess.currentQR = null;
+      }
+      return true;
+    case "UNPAIRED":
+    case "UNPAIRED_IDLE":
+      if (!sess.isReady) {
+        sess.connectionState = "qr";
+      }
+      return true;
+    default:
+      return false;
+  }
+}
+
 function shouldAutoReconnect(reason) {
   return reason === "TIMEOUT" || reason === "CONFLICT";
 }
@@ -1087,6 +1109,7 @@ async function initializeClient(userId) {
     clearSyncWatchdog(sess);
     sess.connectionState = "qr";
     sess.lastDisconnectReason = null;
+    console.log(`[WA QR] ${userId}: novo QR recebido`);
     try { sess.currentQR = await QRCode.toDataURL(qr, { width: 300, margin: 2 }); } catch { sess.currentQR = null; }
     broadcastSession(userId, { status: "qr" });
   });
@@ -1120,6 +1143,10 @@ async function initializeClient(userId) {
 
   sess.client.on("change_state", (state) => {
     sess.lastWaState = normalizeStateValue(state);
+    const progressDetected = syncConnectionStateFromWaState(sess, sess.lastWaState);
+    if (progressDetected && sess.connectionState === "connecting") {
+      scheduleSyncWatchdog(userId, `state:${sess.lastWaState}`);
+    }
     console.log(`[WA STATE] ${userId}: ${sess.lastWaState}`);
     broadcastSession(userId);
   });
@@ -2639,10 +2666,11 @@ process.on("SIGTERM", async () => {
   } catch { }
 })();
 
-app.listen(port, () => {
-  console.log(`\n🟢 WhatsApp Sender Pro v5.1 Multi-User — http://localhost:${port}\n`);
-  console.log(`   Landing: http://localhost:${port}/`);
-  console.log(`   App:     http://localhost:${port}/app\n`);
+app.listen(port, host, () => {
+  console.log(`\n🟢 WhatsApp Sender Pro v5.1 Multi-User — http://${host}:${port}\n`);
+  console.log(`   Landing: http://${host}:${port}/`);
+  console.log(`   App:     http://${host}:${port}/app`);
+  console.log(`   Health:  http://${host}:${port}/healthz\n`);
 }).on("listening", function () {
   // Aumenta timeouts do servidor para suportar conexões SSE long-lived
   this.keepAliveTimeout = 120000;  // 2 minutos
