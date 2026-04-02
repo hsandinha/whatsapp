@@ -48,6 +48,10 @@ let WhatsAppClientClass = null;
 let WhatsAppLocalAuthClass = null;
 let WhatsAppMessageMediaClass = null;
 let PuppeteerModule = null;
+const WA_READY_TIMEOUT_MS = Math.max(
+  parseInt(process.env.WA_READY_TIMEOUT_MS || "120000", 10) || 120000,
+  30000
+);
 
 function getWhatsAppClientDeps() {
   if (!WhatsAppClientClass || !WhatsAppLocalAuthClass) {
@@ -365,6 +369,7 @@ function getSession(userId) {
       reconnectTimer: null,
       reconnectAttempts: 0,
       autoReconnectEnabled: true,
+      syncWatchdogTimer: null,
     });
   }
   return sessions.get(userId);
@@ -841,6 +846,53 @@ function clearReconnectTimer(sess) {
   sess.reconnectTimer = null;
 }
 
+function clearSyncWatchdog(sess) {
+  if (!sess.syncWatchdogTimer) return;
+  clearTimeout(sess.syncWatchdogTimer);
+  sess.syncWatchdogTimer = null;
+}
+
+function scheduleSyncWatchdog(userId, phase = "authenticated") {
+  const sess = getSession(userId);
+  clearSyncWatchdog(sess);
+
+  if (!WA_READY_TIMEOUT_MS) return;
+
+  sess.syncWatchdogTimer = setTimeout(async () => {
+    const latest = getSession(userId);
+    latest.syncWatchdogTimer = null;
+
+    if (!latest.client || latest.isReady) return;
+
+    if (!["connecting", "authenticated", "loading"].includes(latest.connectionState)) {
+      return;
+    }
+
+    latest.connectionState = "disconnected";
+    latest.currentQR = null;
+    latest.phoneNumber = null;
+    latest.lastDisconnectReason = "READY_TIMEOUT";
+
+    console.error(
+      `[WA READY TIMEOUT] ${userId}: travou em ${phase} por ${WA_READY_TIMEOUT_MS}ms`
+    );
+
+    try {
+      await latest.client.destroy();
+    } catch (err) {
+      console.warn(`[WA READY TIMEOUT] Erro ao destruir client (${userId}):`, err.message || err);
+    }
+
+    latest.client = null;
+    broadcastSession(userId, {
+      status: "error",
+      error: "Timeout aguardando sincronização do WhatsApp Web.",
+      reason: "READY_TIMEOUT",
+    });
+    scheduleReconnect(userId, "TIMEOUT");
+  }, WA_READY_TIMEOUT_MS);
+}
+
 function normalizeStateValue(value) {
   if (!value) return null;
   if (typeof value === "string") return value;
@@ -909,6 +961,7 @@ async function initializeClient(userId) {
   const chromeExecutablePath = resolveChromeExecutablePath();
 
   clearReconnectTimer(sess);
+  clearSyncWatchdog(sess);
   sess.autoReconnectEnabled = true;
 
   if (sess.client) {
@@ -969,6 +1022,7 @@ async function initializeClient(userId) {
       clientId: userId,
       dataPath: AUTH_DIR,
     }),
+    authTimeoutMs: 60000,
     puppeteer: {
       headless: true,
       executablePath: chromeExecutablePath,
@@ -980,17 +1034,17 @@ async function initializeClient(userId) {
         "--no-first-run",
         "--no-zygote",
         "--disable-gpu",
-        "--single-process",
       ],
     },
     takeoverOnConflict: true,
     takeoverTimeoutMs: 5000,
     webVersionCache: {
-      type: "local",
+      type: "none",
     },
   });
 
   sess.client.on("qr", async (qr) => {
+    clearSyncWatchdog(sess);
     sess.connectionState = "qr";
     sess.lastDisconnectReason = null;
     try { sess.currentQR = await QRCode.toDataURL(qr, { width: 300, margin: 2 }); } catch { sess.currentQR = null; }
@@ -998,17 +1052,23 @@ async function initializeClient(userId) {
   });
 
   sess.client.on("loading_screen", (percent, message) => {
+    sess.connectionState = "loading";
+    scheduleSyncWatchdog(userId, "loading");
     broadcastSession(userId, { status: "loading", percent, message });
   });
 
   sess.client.on("authenticated", () => {
-    sess.connectionState = "connecting";
+    sess.connectionState = "authenticated";
     sess.currentQR = null;
+    sess.lastDisconnectReason = null;
+    console.log(`[WA AUTHENTICATED] ${userId}`);
+    scheduleSyncWatchdog(userId, "authenticated");
     broadcastSession(userId, { status: "authenticated" });
   });
 
   sess.client.on("auth_failure", (msg) => {
     clearReconnectTimer(sess);
+    clearSyncWatchdog(sess);
     sess.connectionState = "disconnected";
     sess.isReady = false;
     sess.currentQR = null;
@@ -1027,6 +1087,7 @@ async function initializeClient(userId) {
   sess.client.on("ready", () => {
     console.log(`✅ WhatsApp pronto para usuário ${userId}`);
     clearReconnectTimer(sess);
+    clearSyncWatchdog(sess);
     sess.connectionState = "connected";
     sess.isReady = true;
     sess.currentQR = null;
@@ -1047,6 +1108,7 @@ async function initializeClient(userId) {
   sess.client.on("disconnected", (reason) => {
     const normalizedReason = normalizeStateValue(reason);
     clearReconnectTimer(sess);
+    clearSyncWatchdog(sess);
     sess.connectionState = "disconnected";
     sess.isReady = false;
     sess.currentQR = null;
@@ -1061,6 +1123,7 @@ async function initializeClient(userId) {
   sess.client.initialize().catch((err) => {
     console.error(`Erro ao inicializar (${userId}):`, err);
     clearReconnectTimer(sess);
+    clearSyncWatchdog(sess);
     sess.connectionState = "disconnected";
     sess.isReady = false;
     sess.lastDisconnectReason = normalizeStateValue(err);
@@ -1441,6 +1504,7 @@ app.get("/api/session/status", (req, res) => {
 app.post("/api/session/close", async (req, res) => {
   const sess = getSession(req.userId);
   clearReconnectTimer(sess);
+  clearSyncWatchdog(sess);
   sess.autoReconnectEnabled = false;
   try {
     if (sess.client) {
@@ -1462,6 +1526,7 @@ app.post("/api/session/close", async (req, res) => {
 app.post("/api/session/restart", async (req, res) => {
   const sess = getSession(req.userId);
   clearReconnectTimer(sess);
+  clearSyncWatchdog(sess);
   sess.autoReconnectEnabled = true;
   sess.reconnectAttempts = 0;
   sess.connectionState = "disconnected";
@@ -2496,6 +2561,7 @@ app.post("/api/validate-numbers", async (req, res) => {
 async function destroyAllSessions() {
   for (const [userId, sess] of sessions) {
     clearReconnectTimer(sess);
+    clearSyncWatchdog(sess);
     if (sess.client) {
       try { await sess.client.destroy(); } catch { }
     }
