@@ -53,12 +53,14 @@ const WA_READY_TIMEOUT_MS = Math.max(
   parseInt(process.env.WA_READY_TIMEOUT_MS || "120000", 10) || 120000,
   30000
 );
-const CORS_ALLOWED_ORIGINS = new Set(
-  (process.env.CORS_ALLOWED_ORIGINS || "")
+const CORS_DEFAULT_ORIGINS = ["https://whatsapphebert.vercel.app"];
+const CORS_ALLOWED_ORIGINS = new Set([
+  ...CORS_DEFAULT_ORIGINS,
+  ...(process.env.CORS_ALLOWED_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())
-    .filter(Boolean)
-);
+    .filter(Boolean),
+]);
 
 function appendVaryHeader(res, value) {
   const current = String(res.getHeader("Vary") || "")
