@@ -1872,11 +1872,11 @@ textarea:focus {
 }
 
 .send-order-option:hover {
-    border-color: var(--primary-color);
+    border-color: var(--success);
 }
 
 .send-order-option.active {
-    border-color: var(--primary-color);
+    border-color: var(--success);
     background: rgba(37, 211, 102, 0.06);
 }
 
@@ -1887,7 +1887,7 @@ textarea:focus {
 }
 
 .send-order-option.active i {
-    color: var(--primary-color);
+    color: var(--success);
 }
 
 .send-order-option span {
@@ -1930,12 +1930,12 @@ textarea:focus {
 }
 
 .fmt-btn:hover {
-    background: var(--primary-color);
+    background: var(--success);
     color: white;
 }
 
 .fmt-btn.active {
-    background: var(--primary-color);
+    background: var(--success);
     color: white;
 }
 
@@ -2084,7 +2084,7 @@ video.preview-media-item {
 }
 
 .builder-info i {
-    color: var(--primary-color);
+    color: var(--success);
     margin-top: 2px;
     font-style: normal;
 }
@@ -2187,7 +2187,7 @@ video.preview-media-item {
 }
 
 .media-tab.active {
-    background: var(--primary-color);
+    background: var(--success);
     color: white;
 }
 
@@ -2195,20 +2195,154 @@ video.preview-media-item {
     background: rgba(37, 211, 102, 0.1);
 }
 
-.media-panel {
-    display: none;
+/* Upload progress bar */
+.upload-progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
 }
 
-.media-panel.active {
-    display: block;
+.upload-progress-track {
+    flex: 1;
+    height: 8px;
+    background: var(--border-color);
+    border-radius: 99px;
+    overflow: hidden;
 }
 
-.doc-preview {
+.upload-progress-fill {
+    height: 100%;
+    background: var(--success);
+    border-radius: 99px;
+    transition: width 0.2s;
+}
+
+#uploadProgressText {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--success);
+    min-width: 36px;
+    text-align: right;
+}
+
+/* Unified file list */
+.unified-file-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     margin-top: 10px;
 }
+
+.unified-file-header {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    padding: 4px 2px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 2px;
+}
+
+.unified-file-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    transition: opacity 0.2s;
+}
+
+.unified-file-item.inactive-tab-file {
+    opacity: 0.5;
+}
+
+.unified-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.unified-thumb-video,
+.unified-thumb-doc {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    background: var(--bg-tertiary, var(--border-color));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.unified-file-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.unified-file-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.unified-file-badges {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.unified-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 99px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.badge-type-img {
+    background: rgba(37, 211, 102, 0.15);
+    color: #19a050;
+}
+
+.badge-type-vid {
+    background: rgba(88, 101, 242, 0.15);
+    color: #5865f2;
+}
+
+.badge-type-doc {
+    background: rgba(230, 100, 37, 0.15);
+    color: #e66425;
+}
+
+.badge-not-sending {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.unified-file-item .caption-input {
+    font-size: 0.78rem;
+    padding: 3px 8px;
+    height: 28px;
+    margin-top: 2px;
+}
+
+
 
 .doc-item {
     display: flex;

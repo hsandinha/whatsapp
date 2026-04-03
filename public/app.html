@@ -39,7 +39,8 @@
                             <small id="userEmail">email@email.com</small>
                         </div>
                         <hr class="divider">
-                        <a href="/admin" id="adminLink" data-app-path="/admin" class="dropdown-item" style="display:none;">
+                        <a href="/admin" id="adminLink" data-app-path="/admin" class="dropdown-item"
+                            style="display:none;">
                             <i class="fas fa-cog"></i> Painel Admin
                         </a>
                         <button onclick="doLogout()" class="dropdown-item">
@@ -179,32 +180,18 @@
                                     <i class="fas fa-file-pdf"></i> Documentos
                                 </button>
                             </div>
-                            <div id="media-images" class="media-panel active">
-                                <div class="upload-area" id="uploadArea">
-                                    <i class="fas fa-cloud-upload-alt"></i>
-                                    <p>Arraste ou clique para enviar imagens</p>
-                                    <input type="file" id="imageInput" accept="image/*" multiple hidden />
-                                </div>
-                                <div id="imagePreview" class="image-preview"></div>
+                            <div class="upload-area" id="uploadArea">
+                                <i class="fas fa-cloud-upload-alt" id="uploadAreaIcon"></i>
+                                <p id="uploadAreaLabel">Arraste ou clique para enviar imagens</p>
+                                <input type="file" id="mediaFileInput" accept="image/*" multiple hidden />
                             </div>
-                            <div id="media-videos" class="media-panel">
-                                <div class="upload-area" id="videoUploadArea">
-                                    <i class="fas fa-video"></i>
-                                    <p>Arraste ou clique para enviar MP4 / MOV / WEBM</p>
-                                    <input type="file" id="videoInput"
-                                        accept=".mp4,.mov,.webm,.m4v,video/mp4,video/quicktime,video/webm" multiple hidden />
+                            <div class="upload-progress-wrap" id="uploadProgressWrap" style="display:none;">
+                                <div class="upload-progress-track">
+                                    <div class="upload-progress-fill" id="uploadProgressFill" style="width:0%"></div>
                                 </div>
-                                <div id="videoPreview" class="image-preview"></div>
+                                <span id="uploadProgressText">0%</span>
                             </div>
-                            <div id="media-documents" class="media-panel">
-                                <div class="upload-area" id="docUploadArea">
-                                    <i class="fas fa-file-upload"></i>
-                                    <p>Arraste ou clique para enviar PDF / DOC / XLS / ZIP</p>
-                                    <input type="file" id="docInput"
-                                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" multiple hidden />
-                                </div>
-                                <div id="docPreview" class="doc-preview"></div>
-                            </div>
+                            <div id="unifiedFileList" class="unified-file-list"></div>
                         </div>
                     </section>
                 </aside>

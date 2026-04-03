@@ -222,6 +222,7 @@ async function doRegister() {
             password,
             options: {
                 data: { name },
+                emailRedirectTo: resolveAppUrl("/"),
             },
         });
 

@@ -30,6 +30,8 @@ let sessionStatusPollInFlight = false;
 let lastSessionStatus = "disconnected";
 let authRedirectInFlight = false;
 const LOGIN_FORCE_QUERY = "force_login=1";
+let activeMediaTab = "images";
+let pendingUploads = 0;
 
 function getMediaAssetUrl(file) {
   return resolveBackendAssetUrl(file?.path || "");
@@ -100,19 +102,18 @@ function applySendOrderSelection(order, clickedEl) {
 }
 
 function getActiveMediaTab() {
-  const activePanel = document.querySelector(".media-panel.active");
-  return activePanel?.id?.replace("media-", "") || "images";
+  return activeMediaTab;
 }
 
 function activateMediaTab(tab) {
+  activeMediaTab = tab;
   document.querySelectorAll(".media-tab").forEach((button) => button.classList.remove("active"));
-  document.querySelectorAll(".media-panel").forEach((panel) => panel.classList.remove("active"));
-  const panel = document.getElementById(`media-${tab}`);
-  if (panel) panel.classList.add("active");
   const button = Array.from(document.querySelectorAll(".media-tab")).find((el) =>
     el.getAttribute("onclick")?.includes(`'${tab}'`)
   );
   if (button) button.classList.add("active");
+  updateUploadAreaForTab(tab);
+  renderUnifiedFileList();
 }
 
 function collectSendDraft() {
@@ -205,7 +206,11 @@ function getPreferredMediaTab() {
 }
 
 function hasUploadedMedia() {
-  return uploadedImages.length > 0 || uploadedVideos.length > 0 || uploadedDocs.length > 0;
+  const tab = getActiveMediaTab();
+  if (tab === "images") return uploadedImages.length > 0;
+  if (tab === "videos") return uploadedVideos.length > 0;
+  if (tab === "documents") return uploadedDocs.length > 0;
+  return false;
 }
 
 function restoreSendDraft() {
@@ -323,9 +328,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   setupEventSource();
-  setupImageUpload();
-  setupVideoUpload();
-  setupDocUpload();
+  setupMediaUpload();
   setupMessageEditor();
   setupDraftPersistence();
   checkSessionStatus();
@@ -1067,9 +1070,11 @@ function updatePreviewContent() {
   html = html.replace(/\n/g, "<br>");
 
   let mediaHtml = "";
+  const sendChecked = document.getElementById("sendImageCheck").checked;
+  const previewTab = getActiveMediaTab();
 
   // Show image previews
-  if (document.getElementById("sendImageCheck").checked && uploadedImages.length > 0) {
+  if (sendChecked && previewTab === "images" && uploadedImages.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedImages.forEach(img => {
       mediaHtml += `<img src="${getMediaAssetUrl(img)}" class="preview-media-item" alt="${escapeHTML(img.name)}" />`;
@@ -1077,7 +1082,7 @@ function updatePreviewContent() {
     mediaHtml += "</div>";
   }
 
-  if (document.getElementById("sendImageCheck").checked && uploadedVideos.length > 0) {
+  if (sendChecked && previewTab === "videos" && uploadedVideos.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedVideos.forEach(video => {
       mediaHtml += `<video src="${getMediaAssetUrl(video)}" class="preview-media-item" preload="metadata" muted playsinline controls></video>`;
@@ -1086,7 +1091,7 @@ function updatePreviewContent() {
   }
 
   // Show document previews
-  if (document.getElementById("sendImageCheck").checked && uploadedDocs.length > 0) {
+  if (sendChecked && previewTab === "documents" && uploadedDocs.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedDocs.forEach(doc => {
       const icon = getDocIcon(doc.name);
@@ -1274,15 +1279,62 @@ function getSendOrder() {
 // MEDIA TABS (Images / Videos / Documents)
 // ═══════════════════════════════════════════════════════════════
 
+const MEDIA_TAB_CONFIG = {
+  images: {
+    accept: "image/*",
+    label: "Arraste ou clique para enviar imagens",
+    icon: "fa-cloud-upload-alt",
+    kind: "image",
+    targetList: () => uploadedImages,
+    prefix: "imagem",
+  },
+  videos: {
+    accept: ".mp4,.mov,.webm,.m4v,video/mp4,video/quicktime,video/webm",
+    label: "Arraste ou clique para enviar MP4 / MOV / WEBM",
+    icon: "fa-video",
+    kind: "video",
+    targetList: () => uploadedVideos,
+    prefix: "video",
+  },
+  documents: {
+    accept: ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip",
+    label: "Arraste ou clique para enviar PDF / DOC / XLS / ZIP",
+    icon: "fa-file-upload",
+    kind: "document",
+    targetList: () => uploadedDocs,
+    prefix: "documento",
+  },
+};
+
 function switchMediaTab(tab, btn) {
   activateMediaTab(tab);
-  if (btn) btn.classList.add("active");
   saveSendDraft();
 }
 
-function setupVideoUpload() {
-  const area = document.getElementById("videoUploadArea");
-  const input = document.getElementById("videoInput");
+function updateUploadAreaForTab(tab) {
+  const cfg = MEDIA_TAB_CONFIG[tab] || MEDIA_TAB_CONFIG.images;
+  const input = document.getElementById("mediaFileInput");
+  const icon = document.getElementById("uploadAreaIcon");
+  const label = document.getElementById("uploadAreaLabel");
+  if (input) input.accept = cfg.accept;
+  if (icon) icon.className = `fas ${cfg.icon}`;
+  if (label) label.textContent = cfg.label;
+}
+
+async function uploadCurrentTabMedia(files) {
+  const tab = getActiveMediaTab();
+  const cfg = MEDIA_TAB_CONFIG[tab] || MEDIA_TAB_CONFIG.images;
+  await uploadMediaFiles(files, {
+    expectedKind: cfg.kind,
+    successMessagePrefix: cfg.prefix,
+    targetList: cfg.targetList(),
+    render: renderUnifiedFileList,
+  });
+}
+
+function setupMediaUpload() {
+  const area = document.getElementById("uploadArea");
+  const input = document.getElementById("mediaFileInput");
   if (!area || !input) return;
   area.addEventListener("click", () => input.click());
   area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("drag-over"); });
@@ -1290,86 +1342,10 @@ function setupVideoUpload() {
   area.addEventListener("drop", (e) => {
     e.preventDefault();
     area.classList.remove("drag-over");
-    if (e.dataTransfer.files.length > 0) uploadVideos(e.dataTransfer.files);
+    if (e.dataTransfer.files.length > 0) uploadCurrentTabMedia(e.dataTransfer.files);
   });
   input.addEventListener("change", () => {
-    if (input.files.length > 0) { uploadVideos(input.files); input.value = ""; }
-  });
-}
-
-async function uploadVideos(files) {
-  await uploadMediaFiles(files, {
-    expectedKind: "video",
-    successMessagePrefix: "video",
-    targetList: uploadedVideos,
-    render: renderVideoPreview,
-  });
-}
-
-function setupDocUpload() {
-  const area = document.getElementById("docUploadArea");
-  const input = document.getElementById("docInput");
-  if (!area || !input) return;
-  area.addEventListener("click", () => input.click());
-  area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("drag-over"); });
-  area.addEventListener("dragleave", () => area.classList.remove("drag-over"));
-  area.addEventListener("drop", (e) => {
-    e.preventDefault();
-    area.classList.remove("drag-over");
-    if (e.dataTransfer.files.length > 0) uploadDocs(e.dataTransfer.files);
-  });
-  input.addEventListener("change", () => {
-    if (input.files.length > 0) { uploadDocs(input.files); input.value = ""; }
-  });
-}
-
-async function uploadDocs(files) {
-  await uploadMediaFiles(files, {
-    expectedKind: "document",
-    successMessagePrefix: "documento",
-    targetList: uploadedDocs,
-    render: renderDocPreview,
-  });
-}
-
-function renderVideoPreview() {
-  const container = document.getElementById("videoPreview");
-  if (!container) return;
-  container.innerHTML = "";
-  uploadedVideos.forEach((video, i) => {
-    const div = document.createElement("div");
-    div.className = "image-item";
-    div.innerHTML = `
-      <video src="${getMediaAssetUrl(video)}" muted playsinline preload="metadata" controls></video>
-      <button class="btn-remove" onclick="removeVideo(${i})" title="Remover"><i class="fas fa-times"></i></button>
-      <input type="text" class="caption-input" placeholder="Legenda..." value="${video.caption || ""}"
-        onchange="updateVideoCaption(${i}, this.value)" />
-    `;
-    container.appendChild(div);
-  });
-}
-
-function renderDocPreview() {
-  const container = document.getElementById("docPreview");
-  if (!container) return;
-  container.innerHTML = "";
-  uploadedDocs.forEach((doc, i) => {
-    const ext = doc.name.split(".").pop().toLowerCase();
-    const iconClass = getDocIcon(doc.name);
-    const colorClass = getDocColorClass(ext);
-    const div = document.createElement("div");
-    div.className = "doc-item";
-    div.innerHTML = `
-      <div class="doc-item-icon ${colorClass}"><i class="fas ${iconClass}"></i></div>
-      <div class="doc-item-info">
-        <div class="doc-item-name">${doc.name}</div>
-        <div class="doc-item-size">${ext.toUpperCase()}</div>
-      </div>
-      <button class="btn-remove-item" onclick="removeDoc(${i})" title="Remover">
-        <i class="fas fa-times"></i>
-      </button>
-    `;
-    container.appendChild(div);
+    if (input.files.length > 0) { uploadCurrentTabMedia(input.files); input.value = ""; }
   });
 }
 
@@ -1389,29 +1365,6 @@ function getDocColorClass(ext) {
   if (["doc", "docx"].includes(ext)) return "doc";
   if (["xls", "xlsx"].includes(ext)) return "xls";
   return "other";
-}
-
-async function removeDoc(index) {
-  const doc = uploadedDocs[index];
-  try { await authFetch(`/api/images/${doc.id}`, { method: "DELETE" }); } catch { }
-  uploadedDocs.splice(index, 1);
-  renderDocPreview();
-  updatePreviewContent();
-  saveSendDraft();
-}
-
-function updateVideoCaption(index, value) {
-  uploadedVideos[index].caption = value;
-  saveSendDraft();
-}
-
-async function removeVideo(index) {
-  const video = uploadedVideos[index];
-  try { await authFetch(`/api/images/${video.id}`, { method: "DELETE" }); } catch { }
-  uploadedVideos.splice(index, 1);
-  renderVideoPreview();
-  updatePreviewContent();
-  saveSendDraft();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1470,61 +1423,89 @@ async function deleteCurrentTemplate() {
 // ═══════════════════════════════════════════════════════════════
 // UPLOAD DE IMAGENS
 // ═══════════════════════════════════════════════════════════════
-function setupImageUpload() {
-  const area = document.getElementById("uploadArea");
-  const input = document.getElementById("imageInput");
-  area.addEventListener("click", () => input.click());
-  area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("drag-over"); });
-  area.addEventListener("dragleave", () => area.classList.remove("drag-over"));
-  area.addEventListener("drop", (e) => {
-    e.preventDefault();
-    area.classList.remove("drag-over");
-    if (e.dataTransfer.files.length > 0) uploadImages(e.dataTransfer.files);
-  });
-  input.addEventListener("change", () => {
-    if (input.files.length > 0) { uploadImages(input.files); input.value = ""; }
-  });
-}
-
-async function uploadImages(files) {
-  await uploadMediaFiles(files, {
-    expectedKind: "image",
-    successMessagePrefix: "imagem",
-    targetList: uploadedImages,
-    render: renderImagePreview,
-  });
-}
-
 async function uploadMediaFiles(files, { expectedKind, successMessagePrefix, targetList, render }) {
   const fd = new FormData();
   for (const f of files) fd.append("images", f);
 
-  try {
-    const res = await fetch(resolveBackendUrl("/api/images/upload"), {
-      method: "POST",
-      body: fd,
-      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+  pendingUploads++;
+  updateSendButtonPendingState();
+  showUploadProgress(0);
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", resolveBackendUrl("/api/images/upload"));
+    if (authToken) xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        showUploadProgress(Math.round((e.loaded / e.total) * 100));
+      }
     });
-    const data = await parseJsonResponse(res);
 
-    if (!res.ok || data.success === false) {
-      throw new Error(data.error || `HTTP ${res.status}`);
-    }
+    xhr.addEventListener("load", () => {
+      pendingUploads = Math.max(0, pendingUploads - 1);
+      if (pendingUploads === 0) hideUploadProgress();
+      updateSendButtonPendingState();
 
-    const receivedFiles = Array.isArray(data.files)
-      ? data.files.filter((file) => file.kind === expectedKind)
-      : [];
+      let data;
+      try { data = JSON.parse(xhr.responseText); } catch {
+        alert(`Erro ao enviar ${successMessagePrefix}: Resposta inválida do servidor.`);
+        return resolve();
+      }
 
-    if (receivedFiles.length === 0) {
-      throw new Error(`Nenhum ${successMessagePrefix} valido foi recebido.`);
-    }
+      if (xhr.status < 200 || xhr.status >= 300 || data.success === false) {
+        const msg = data?.error || (xhr.responseText.includes("File too large") ? "Arquivo acima do limite permitido." : `HTTP ${xhr.status}`);
+        alert(`Erro ao enviar ${successMessagePrefix}: ` + msg);
+        return resolve();
+      }
 
-    targetList.push(...receivedFiles);
-    render();
-    updatePreviewContent();
-    saveSendDraft();
-  } catch (err) {
-    alert(`Erro ao enviar ${successMessagePrefix}: ` + err.message);
+      const receivedFiles = Array.isArray(data.files)
+        ? data.files.filter((file) => file.kind === expectedKind)
+        : [];
+
+      if (receivedFiles.length === 0) {
+        alert(`Nenhum ${successMessagePrefix} válido foi recebido.`);
+        return resolve();
+      }
+
+      targetList.push(...receivedFiles);
+      render();
+      updatePreviewContent();
+      saveSendDraft();
+      resolve();
+    });
+
+    xhr.addEventListener("error", () => {
+      pendingUploads = Math.max(0, pendingUploads - 1);
+      if (pendingUploads === 0) hideUploadProgress();
+      updateSendButtonPendingState();
+      alert(`Erro ao enviar ${successMessagePrefix}: Falha na conexão.`);
+      resolve();
+    });
+
+    xhr.send(fd);
+  });
+}
+
+function showUploadProgress(pct) {
+  const wrap = document.getElementById("uploadProgressWrap");
+  const fill = document.getElementById("uploadProgressFill");
+  const text = document.getElementById("uploadProgressText");
+  if (!wrap) return;
+  wrap.style.display = "flex";
+  fill.style.width = pct + "%";
+  text.textContent = pct + "%";
+}
+
+function hideUploadProgress() {
+  const wrap = document.getElementById("uploadProgressWrap");
+  if (wrap) wrap.style.display = "none";
+}
+
+function updateSendButtonPendingState() {
+  if (pendingUploads > 0) {
+    document.getElementById("btnSend").disabled = true;
+    document.getElementById("btnSchedule").disabled = true;
   }
 }
 
@@ -1542,24 +1523,96 @@ async function parseJsonResponse(res) {
   }
 }
 
-function renderImagePreview() {
-  const container = document.getElementById("imagePreview");
+// ═══════════════════════════════════════════════════════════════
+// UNIFIED FILE LIST
+// ═══════════════════════════════════════════════════════════════
+
+function renderUnifiedFileList() {
+  const container = document.getElementById("unifiedFileList");
+  if (!container) return;
   container.innerHTML = "";
-  uploadedImages.forEach((img, i) => {
+
+  const allFiles = [
+    ...uploadedImages.map((f, i) => ({ file: f, type: "images", idx: i })),
+    ...uploadedVideos.map((f, i) => ({ file: f, type: "videos", idx: i })),
+    ...uploadedDocs.map((f, i) => ({ file: f, type: "documents", idx: i })),
+  ];
+
+  if (!allFiles.length) return;
+
+  const tab = getActiveMediaTab();
+  const tabLabels = { images: "Imagens", videos: "Vídeos", documents: "Documentos" };
+
+  const headerDiv = document.createElement("div");
+  headerDiv.className = "unified-file-header";
+  headerDiv.innerHTML = `<span><i class="fas fa-paperclip"></i> ${allFiles.length} arquivo(s) carregado(s) — enviando: <strong>${tabLabels[tab] || tab}</strong></span>`;
+  container.appendChild(headerDiv);
+
+  allFiles.forEach(({ file, type, idx }) => {
+    const isActive = type === tab;
     const div = document.createElement("div");
-    div.className = "image-item";
+    div.className = "unified-file-item" + (isActive ? " active-tab-file" : " inactive-tab-file");
+
+    let thumbHtml = "";
+    let captionHtml = "";
+    let removeCall = "";
+    let badgeClass = "";
+    let badgeLabel = "";
+
+    if (type === "images") {
+      thumbHtml = `<img src="${getMediaAssetUrl(file)}" class="unified-thumb" alt="${escapeHTML(file.name)}" />`;
+      captionHtml = `<input type="text" class="caption-input" placeholder="Legenda..." value="${escapeHTML(file.caption || "")}" onchange="updateCaption(${idx}, this.value)" />`;
+      removeCall = `removeImage(${idx})`;
+      badgeClass = "badge-type-img";
+      badgeLabel = "Imagem";
+    } else if (type === "videos") {
+      thumbHtml = `<div class="unified-thumb unified-thumb-video"><i class="fas fa-video"></i></div>`;
+      captionHtml = `<input type="text" class="caption-input" placeholder="Legenda..." value="${escapeHTML(file.caption || "")}" onchange="updateVideoCaption(${idx}, this.value)" />`;
+      removeCall = `removeVideo(${idx})`;
+      badgeClass = "badge-type-vid";
+      badgeLabel = "Vídeo";
+    } else {
+      const iconClass = getDocIcon(file.name);
+      thumbHtml = `<div class="unified-thumb unified-thumb-doc"><i class="fas ${iconClass}"></i></div>`;
+      removeCall = `removeDoc(${idx})`;
+      badgeClass = "badge-type-doc";
+      badgeLabel = "Doc";
+    }
+
+    const inactiveBadge = !isActive
+      ? `<span class="badge-not-sending" title="Aba não ativa — não será enviada"><i class="fas fa-eye-slash"></i> não envia</span>`
+      : "";
+
     div.innerHTML = `
-      <img src="${getMediaAssetUrl(img)}" alt="${img.name}" />
-      <button class="btn-remove" onclick="removeImage(${i})" title="Remover"><i class="fas fa-times"></i></button>
-      <input type="text" class="caption-input" placeholder="Legenda..." value="${img.caption || ""}"
-        onchange="updateCaption(${i}, this.value)" />
+      ${thumbHtml}
+      <div class="unified-file-info">
+        <span class="unified-file-name" title="${escapeHTML(file.name)}">${escapeHTML(file.name)}</span>
+        <div class="unified-file-badges">
+          <span class="unified-badge ${badgeClass}">${badgeLabel}</span>
+          ${inactiveBadge}
+        </div>
+        ${captionHtml}
+      </div>
+      <button class="btn-remove-item" onclick="${removeCall}" title="Remover"><i class="fas fa-times"></i></button>
     `;
     container.appendChild(div);
   });
+
+  updatePreviewContent();
 }
+
+// Keep as aliases so existing callers (restoreSendDraft, applyRunningJobConfig) still work
+function renderImagePreview() { renderUnifiedFileList(); }
+function renderVideoPreview() { renderUnifiedFileList(); }
+function renderDocPreview() { renderUnifiedFileList(); }
 
 function updateCaption(index, value) {
   uploadedImages[index].caption = value;
+  saveSendDraft();
+}
+
+function updateVideoCaption(index, value) {
+  uploadedVideos[index].caption = value;
   saveSendDraft();
 }
 
@@ -1567,13 +1620,30 @@ async function removeImage(index) {
   const img = uploadedImages[index];
   try { await authFetch(`/api/images/${img.id}`, { method: "DELETE" }); } catch { }
   uploadedImages.splice(index, 1);
-  renderImagePreview();
+  renderUnifiedFileList();
   updatePreviewContent();
   saveSendDraft();
 }
 
-// ═══════════════════════════════════════════════════════════════
-// IMPORTAÇÃO DE CONTATOS
+async function removeVideo(index) {
+  const video = uploadedVideos[index];
+  try { await authFetch(`/api/images/${video.id}`, { method: "DELETE" }); } catch { }
+  uploadedVideos.splice(index, 1);
+  renderUnifiedFileList();
+  updatePreviewContent();
+  saveSendDraft();
+}
+
+async function removeDoc(index) {
+  const doc = uploadedDocs[index];
+  try { await authFetch(`/api/images/${doc.id}`, { method: "DELETE" }); } catch { }
+  uploadedDocs.splice(index, 1);
+  renderUnifiedFileList();
+  updatePreviewContent();
+  saveSendDraft();
+}
+
+
 // ═══════════════════════════════════════════════════════════════
 function handleFile(event) {
   const file = event.target.files[0];
@@ -1948,6 +2018,10 @@ async function sendMessages() {
   // Get interactive buttons/list data
   const interactiveData = getInteractiveData();
   const sendOrder = sendImage ? getSendOrder() : "text_first";
+  const activeTab = getActiveMediaTab();
+  const imagesToSend = sendImage && activeTab === "images" ? uploadedImages : [];
+  const videosToSend = sendImage && activeTab === "videos" ? uploadedVideos : [];
+  const docsToSend = sendImage && activeTab === "documents" ? uploadedDocs : [];
 
   if (!confirm(`Enviar para ${activeCustomers.length} contatos ativos?`)) return;
 
@@ -1968,9 +2042,9 @@ async function sendMessages() {
       body: JSON.stringify({
         customers: activeCustomers,
         messageTemplate,
-        images: uploadedImages,
-        videos: uploadedVideos,
-        documents: uploadedDocs,
+        images: imagesToSend,
+        videos: videosToSend,
+        documents: docsToSend,
         interactiveData,
         sendOrder,
         intervalMin,
@@ -2408,7 +2482,11 @@ async function confirmSchedule() {
   const activeCustomers = customers.map((c, i) => ({ ...c, _idx: i })).filter((c) => c.active);
   const interactiveData = getInteractiveData();
   const sendImage = document.getElementById("sendImageCheck").checked;
-  if (sendImage && !hasUploadedMedia()) return alert("Nenhuma mídia carregada.");
+  if (sendImage && !hasUploadedMedia()) return alert("Nenhuma mídia carregada na aba ativa.");
+  const scheduleActiveTab = getActiveMediaTab();
+  const scheduleImages = sendImage && scheduleActiveTab === "images" ? uploadedImages : [];
+  const scheduleVideos = sendImage && scheduleActiveTab === "videos" ? uploadedVideos : [];
+  const scheduleDocs = sendImage && scheduleActiveTab === "documents" ? uploadedDocs : [];
 
   try {
     const res = await authFetch("/api/schedules", {
@@ -2418,9 +2496,9 @@ async function confirmSchedule() {
         scheduledAt: new Date(dt).toISOString(),
         customers: activeCustomers,
         messageTemplate: document.getElementById("messageTemplate").value,
-        images: uploadedImages,
-        videos: uploadedVideos,
-        documents: uploadedDocs,
+        images: scheduleImages,
+        videos: scheduleVideos,
+        documents: scheduleDocs,
         interactiveData,
         sendOrder: sendImage ? getSendOrder() : "text_first",
         sendImage,
