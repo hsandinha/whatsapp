@@ -1,7 +1,7 @@
 (function initAppConfig() {
   const manualConfig = {
     APP_BASE_URL: "https://whatsapphebert.vercel.app",
-    API_BASE_URL: "https://api.hebertsandinha.com",
+    API_BASE_URL: "https://whatsapphebert.vercel.app",
   };
 
   // Exemplo:
