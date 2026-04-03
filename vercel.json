@@ -27,6 +27,10 @@
       "destination": "https://api.hebertsandinha.com/api/:path*"
     },
     {
+      "source": "/uploads/:path*",
+      "destination": "https://api.hebertsandinha.com/uploads/:path*"
+    },
+    {
       "source": "/",
       "destination": "/login.html"
     },
