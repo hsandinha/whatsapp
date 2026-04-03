@@ -1,8 +1,4 @@
 (function initAppConfig() {
-  // Para frontend separado:
-  // - APP_BASE_URL = URL do frontend no Vercel
-  // - API_BASE_URL = URL pública do backend via Cloudflare Tunnel
-  // Se deixar vazio, o app usa a própria origem atual.
   const manualConfig = {
     APP_BASE_URL: "https://whatsapphebert.vercel.app",
     API_BASE_URL: "https://api.hebertsandinha.com",
