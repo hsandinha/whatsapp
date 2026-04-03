@@ -29,6 +29,7 @@ let sessionStatusPollTimer = null;
 let sessionStatusPollInFlight = false;
 let lastSessionStatus = "disconnected";
 let authRedirectInFlight = false;
+const LOGIN_FORCE_QUERY = "force_login=1";
 
 function getMediaAssetUrl(file) {
   return resolveBackendAssetUrl(file?.path || "");
@@ -58,7 +59,7 @@ async function redirectToLogin() {
     await sb.auth.signOut({ scope: "local" });
   } catch { }
 
-  window.location.replace(resolveAppUrl("/"));
+  window.location.replace(resolveAppUrl(`/?${LOGIN_FORCE_QUERY}`));
 }
 
 function getDraftStorageKey() {

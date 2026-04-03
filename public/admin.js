@@ -10,6 +10,7 @@ let authToken = null;
 let allUsers = [];
 let currentUserId = null; // para o modal
 let authRedirectInFlight = false;
+const LOGIN_FORCE_QUERY = "force_login=1";
 
 async function redirectToLogin() {
     if (authRedirectInFlight) return;
@@ -17,7 +18,7 @@ async function redirectToLogin() {
     try {
         await sb.auth.signOut({ scope: "local" });
     } catch { }
-    window.location.replace(resolveAppUrl("/"));
+    window.location.replace(resolveAppUrl(`/?${LOGIN_FORCE_QUERY}`));
 }
 
 // ═══════════════════════════════════════════════════════════════

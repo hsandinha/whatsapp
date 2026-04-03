@@ -6,9 +6,19 @@ const { SUPABASE_URL, SUPABASE_ANON_KEY, resolveAppUrl, resolveBackendUrl } = wi
 
 let supabaseClient = null;
 let authRedirectInFlight = false;
+const LOGIN_FORCE_QUERY = "force_login=1";
 
 async function redirectToApp() {
     window.location.replace(resolveAppUrl("/app"));
+}
+
+function hasForcedLoginFlag() {
+    return new URLSearchParams(window.location.search).get("force_login") === "1";
+}
+
+function clearForcedLoginFlag() {
+    if (!hasForcedLoginFlag()) return;
+    window.history.replaceState({}, document.title, resolveAppUrl("/"));
 }
 
 async function clearInvalidSession() {
@@ -120,6 +130,12 @@ async function checkSession() {
     const sb = initSupabase();
     if (!sb) return;
     try {
+        if (hasForcedLoginFlag()) {
+            await clearInvalidSession();
+            clearForcedLoginFlag();
+            return;
+        }
+
         const { data: { session } } = await sb.auth.getSession();
         if (session) {
             const backendSessionOk = await validateBackendSession(session.access_token);
@@ -128,6 +144,7 @@ async function checkSession() {
                 return;
             }
             await clearInvalidSession();
+            clearForcedLoginFlag();
         }
     } catch (err) {
         console.warn("Erro ao verificar sessão:", err);
