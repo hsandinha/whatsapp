@@ -2159,42 +2159,6 @@ video.preview-media-item {
     padding: 6px 14px !important;
 }
 
-/* ===== MEDIA TABS & DOCUMENTS ===== */
-.media-type-tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 12px;
-    background: var(--bg-secondary);
-    padding: 4px;
-    border-radius: 10px;
-}
-
-.media-tab {
-    flex: 1;
-    padding: 8px 14px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 0.82rem;
-    font-weight: 600;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.media-tab.active {
-    background: var(--success);
-    color: white;
-}
-
-.media-tab:not(.active):hover {
-    background: rgba(37, 211, 102, 0.1);
-}
-
 /* Upload progress bar */
 .upload-progress-wrap {
     display: flex;
@@ -2325,14 +2289,6 @@ video.preview-media-item {
 .badge-type-doc {
     background: rgba(230, 100, 37, 0.15);
     color: #e66425;
-}
-
-.badge-not-sending {
-    font-size: 0.68rem;
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    gap: 3px;
 }
 
 .unified-file-item .caption-input {

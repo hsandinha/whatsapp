@@ -169,21 +169,12 @@
                             </div>
                         </div>
                         <div id="imageSection">
-                            <div class="media-type-tabs">
-                                <button class="media-tab active" onclick="switchMediaTab('images', this)">
-                                    <i class="fas fa-image"></i> Imagens
-                                </button>
-                                <button class="media-tab" onclick="switchMediaTab('videos', this)">
-                                    <i class="fas fa-video"></i> Vídeos
-                                </button>
-                                <button class="media-tab" onclick="switchMediaTab('documents', this)">
-                                    <i class="fas fa-file-pdf"></i> Documentos
-                                </button>
-                            </div>
                             <div class="upload-area" id="uploadArea">
-                                <i class="fas fa-cloud-upload-alt" id="uploadAreaIcon"></i>
-                                <p id="uploadAreaLabel">Arraste ou clique para enviar imagens</p>
-                                <input type="file" id="mediaFileInput" accept="image/*" multiple hidden />
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Arraste ou clique para enviar imagens, vídeos ou documentos</p>
+                                <input type="file" id="mediaFileInput"
+                                    accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
+                                    multiple hidden />
                             </div>
                             <div class="upload-progress-wrap" id="uploadProgressWrap" style="display:none;">
                                 <div class="upload-progress-track">

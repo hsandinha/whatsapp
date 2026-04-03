@@ -30,7 +30,6 @@ let sessionStatusPollInFlight = false;
 let lastSessionStatus = "disconnected";
 let authRedirectInFlight = false;
 const LOGIN_FORCE_QUERY = "force_login=1";
-let activeMediaTab = "images";
 let pendingUploads = 0;
 
 function getMediaAssetUrl(file) {
@@ -101,20 +100,7 @@ function applySendOrderSelection(order, clickedEl) {
   });
 }
 
-function getActiveMediaTab() {
-  return activeMediaTab;
-}
 
-function activateMediaTab(tab) {
-  activeMediaTab = tab;
-  document.querySelectorAll(".media-tab").forEach((button) => button.classList.remove("active"));
-  const button = Array.from(document.querySelectorAll(".media-tab")).find((el) =>
-    el.getAttribute("onclick")?.includes(`'${tab}'`)
-  );
-  if (button) button.classList.add("active");
-  updateUploadAreaForTab(tab);
-  renderUnifiedFileList();
-}
 
 function collectSendDraft() {
   return {
@@ -138,7 +124,6 @@ function collectSendDraft() {
     uploadedImages,
     uploadedVideos,
     uploadedDocs,
-    activeMediaTab: getActiveMediaTab(),
   };
 }
 
@@ -198,19 +183,8 @@ function normalizeIntervalForInput(value, fallback = "") {
   return String(num >= 1000 ? Math.round(num / 1000) : Math.round(num));
 }
 
-function getPreferredMediaTab() {
-  if (uploadedImages.length > 0) return "images";
-  if (uploadedVideos.length > 0) return "videos";
-  if (uploadedDocs.length > 0) return "documents";
-  return "images";
-}
-
 function hasUploadedMedia() {
-  const tab = getActiveMediaTab();
-  if (tab === "images") return uploadedImages.length > 0;
-  if (tab === "videos") return uploadedVideos.length > 0;
-  if (tab === "documents") return uploadedDocs.length > 0;
-  return false;
+  return uploadedImages.length > 0 || uploadedVideos.length > 0 || uploadedDocs.length > 0;
 }
 
 function restoreSendDraft() {
@@ -255,10 +229,7 @@ function restoreSendDraft() {
     uploadedImages = Array.isArray(draft.uploadedImages) ? draft.uploadedImages : [];
     uploadedVideos = Array.isArray(draft.uploadedVideos) ? draft.uploadedVideos : [];
     uploadedDocs = Array.isArray(draft.uploadedDocs) ? draft.uploadedDocs : [];
-    renderImagePreview();
-    renderVideoPreview();
-    renderDocPreview();
-    activateMediaTab(draft.activeMediaTab || getPreferredMediaTab());
+    renderUnifiedFileList();
     updatePreviewContent();
   } finally {
     isApplyingDraft = false;
@@ -1071,10 +1042,8 @@ function updatePreviewContent() {
 
   let mediaHtml = "";
   const sendChecked = document.getElementById("sendImageCheck").checked;
-  const previewTab = getActiveMediaTab();
 
-  // Show image previews
-  if (sendChecked && previewTab === "images" && uploadedImages.length > 0) {
+  if (sendChecked && uploadedImages.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedImages.forEach(img => {
       mediaHtml += `<img src="${getMediaAssetUrl(img)}" class="preview-media-item" alt="${escapeHTML(img.name)}" />`;
@@ -1082,7 +1051,7 @@ function updatePreviewContent() {
     mediaHtml += "</div>";
   }
 
-  if (sendChecked && previewTab === "videos" && uploadedVideos.length > 0) {
+  if (sendChecked && uploadedVideos.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedVideos.forEach(video => {
       mediaHtml += `<video src="${getMediaAssetUrl(video)}" class="preview-media-item" preload="metadata" muted playsinline controls></video>`;
@@ -1090,8 +1059,7 @@ function updatePreviewContent() {
     mediaHtml += "</div>";
   }
 
-  // Show document previews
-  if (sendChecked && previewTab === "documents" && uploadedDocs.length > 0) {
+  if (sendChecked && uploadedDocs.length > 0) {
     mediaHtml += '<div class="preview-media">';
     uploadedDocs.forEach(doc => {
       const icon = getDocIcon(doc.name);
@@ -1276,59 +1244,65 @@ function getSendOrder() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MEDIA TABS (Images / Videos / Documents)
+// MEDIA UPLOAD (auto-detect image / video / document)
 // ═══════════════════════════════════════════════════════════════
 
-const MEDIA_TAB_CONFIG = {
-  images: {
-    accept: "image/*",
-    label: "Arraste ou clique para enviar imagens",
-    icon: "fa-cloud-upload-alt",
-    kind: "image",
-    targetList: () => uploadedImages,
-    prefix: "imagem",
-  },
-  videos: {
-    accept: ".mp4,.mov,.webm,.m4v,video/mp4,video/quicktime,video/webm",
-    label: "Arraste ou clique para enviar MP4 / MOV / WEBM",
-    icon: "fa-video",
-    kind: "video",
-    targetList: () => uploadedVideos,
-    prefix: "video",
-  },
-  documents: {
-    accept: ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip",
-    label: "Arraste ou clique para enviar PDF / DOC / XLS / ZIP",
-    icon: "fa-file-upload",
-    kind: "document",
-    targetList: () => uploadedDocs,
-    prefix: "documento",
-  },
-};
+async function uploadAutoDetectMedia(files) {
+  const fd = new FormData();
+  for (const f of files) fd.append("images", f);
 
-function switchMediaTab(tab, btn) {
-  activateMediaTab(tab);
-  saveSendDraft();
-}
+  pendingUploads++;
+  updateSendButtonPendingState();
+  showUploadProgress(0);
 
-function updateUploadAreaForTab(tab) {
-  const cfg = MEDIA_TAB_CONFIG[tab] || MEDIA_TAB_CONFIG.images;
-  const input = document.getElementById("mediaFileInput");
-  const icon = document.getElementById("uploadAreaIcon");
-  const label = document.getElementById("uploadAreaLabel");
-  if (input) input.accept = cfg.accept;
-  if (icon) icon.className = `fas ${cfg.icon}`;
-  if (label) label.textContent = cfg.label;
-}
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", resolveBackendUrl("/api/images/upload"));
+    if (authToken) xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
 
-async function uploadCurrentTabMedia(files) {
-  const tab = getActiveMediaTab();
-  const cfg = MEDIA_TAB_CONFIG[tab] || MEDIA_TAB_CONFIG.images;
-  await uploadMediaFiles(files, {
-    expectedKind: cfg.kind,
-    successMessagePrefix: cfg.prefix,
-    targetList: cfg.targetList(),
-    render: renderUnifiedFileList,
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) showUploadProgress(Math.round((e.loaded / e.total) * 100));
+    });
+
+    xhr.addEventListener("load", () => {
+      pendingUploads = Math.max(0, pendingUploads - 1);
+      if (pendingUploads === 0) hideUploadProgress();
+      updateSendButtonPendingState();
+
+      let data;
+      try { data = JSON.parse(xhr.responseText); } catch {
+        alert("Erro ao enviar: Resposta inválida do servidor.");
+        return resolve();
+      }
+
+      if (xhr.status < 200 || xhr.status >= 300 || data.success === false) {
+        const msg = data?.error || (xhr.responseText.includes("File too large") ? "Arquivo acima do limite permitido." : `HTTP ${xhr.status}`);
+        alert("Erro ao enviar: " + msg);
+        return resolve();
+      }
+
+      const received = Array.isArray(data.files) ? data.files : [];
+      received.forEach((file) => {
+        if (file.kind === "image") uploadedImages.push(file);
+        else if (file.kind === "video") uploadedVideos.push(file);
+        else uploadedDocs.push(file);
+      });
+
+      renderUnifiedFileList();
+      updatePreviewContent();
+      saveSendDraft();
+      resolve();
+    });
+
+    xhr.addEventListener("error", () => {
+      pendingUploads = Math.max(0, pendingUploads - 1);
+      if (pendingUploads === 0) hideUploadProgress();
+      updateSendButtonPendingState();
+      alert("Erro ao enviar: Falha na conexão.");
+      resolve();
+    });
+
+    xhr.send(fd);
   });
 }
 
@@ -1342,10 +1316,10 @@ function setupMediaUpload() {
   area.addEventListener("drop", (e) => {
     e.preventDefault();
     area.classList.remove("drag-over");
-    if (e.dataTransfer.files.length > 0) uploadCurrentTabMedia(e.dataTransfer.files);
+    if (e.dataTransfer.files.length > 0) uploadAutoDetectMedia(e.dataTransfer.files);
   });
   input.addEventListener("change", () => {
-    if (input.files.length > 0) { uploadCurrentTabMedia(input.files); input.value = ""; }
+    if (input.files.length > 0) { uploadAutoDetectMedia(input.files); input.value = ""; }
   });
 }
 
@@ -1421,71 +1395,8 @@ async function deleteCurrentTemplate() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// UPLOAD DE IMAGENS
+// UPLOAD PROGRESS HELPERS
 // ═══════════════════════════════════════════════════════════════
-async function uploadMediaFiles(files, { expectedKind, successMessagePrefix, targetList, render }) {
-  const fd = new FormData();
-  for (const f of files) fd.append("images", f);
-
-  pendingUploads++;
-  updateSendButtonPendingState();
-  showUploadProgress(0);
-
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", resolveBackendUrl("/api/images/upload"));
-    if (authToken) xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
-
-    xhr.upload.addEventListener("progress", (e) => {
-      if (e.lengthComputable) {
-        showUploadProgress(Math.round((e.loaded / e.total) * 100));
-      }
-    });
-
-    xhr.addEventListener("load", () => {
-      pendingUploads = Math.max(0, pendingUploads - 1);
-      if (pendingUploads === 0) hideUploadProgress();
-      updateSendButtonPendingState();
-
-      let data;
-      try { data = JSON.parse(xhr.responseText); } catch {
-        alert(`Erro ao enviar ${successMessagePrefix}: Resposta inválida do servidor.`);
-        return resolve();
-      }
-
-      if (xhr.status < 200 || xhr.status >= 300 || data.success === false) {
-        const msg = data?.error || (xhr.responseText.includes("File too large") ? "Arquivo acima do limite permitido." : `HTTP ${xhr.status}`);
-        alert(`Erro ao enviar ${successMessagePrefix}: ` + msg);
-        return resolve();
-      }
-
-      const receivedFiles = Array.isArray(data.files)
-        ? data.files.filter((file) => file.kind === expectedKind)
-        : [];
-
-      if (receivedFiles.length === 0) {
-        alert(`Nenhum ${successMessagePrefix} válido foi recebido.`);
-        return resolve();
-      }
-
-      targetList.push(...receivedFiles);
-      render();
-      updatePreviewContent();
-      saveSendDraft();
-      resolve();
-    });
-
-    xhr.addEventListener("error", () => {
-      pendingUploads = Math.max(0, pendingUploads - 1);
-      if (pendingUploads === 0) hideUploadProgress();
-      updateSendButtonPendingState();
-      alert(`Erro ao enviar ${successMessagePrefix}: Falha na conexão.`);
-      resolve();
-    });
-
-    xhr.send(fd);
-  });
-}
 
 function showUploadProgress(pct) {
   const wrap = document.getElementById("uploadProgressWrap");
@@ -1540,18 +1451,14 @@ function renderUnifiedFileList() {
 
   if (!allFiles.length) return;
 
-  const tab = getActiveMediaTab();
-  const tabLabels = { images: "Imagens", videos: "Vídeos", documents: "Documentos" };
-
   const headerDiv = document.createElement("div");
   headerDiv.className = "unified-file-header";
-  headerDiv.innerHTML = `<span><i class="fas fa-paperclip"></i> ${allFiles.length} arquivo(s) carregado(s) — enviando: <strong>${tabLabels[tab] || tab}</strong></span>`;
+  headerDiv.innerHTML = `<span><i class="fas fa-paperclip"></i> ${allFiles.length} arquivo(s) carregado(s)</span>`;
   container.appendChild(headerDiv);
 
   allFiles.forEach(({ file, type, idx }) => {
-    const isActive = type === tab;
     const div = document.createElement("div");
-    div.className = "unified-file-item" + (isActive ? " active-tab-file" : " inactive-tab-file");
+    div.className = "unified-file-item";
 
     let thumbHtml = "";
     let captionHtml = "";
@@ -1579,17 +1486,12 @@ function renderUnifiedFileList() {
       badgeLabel = "Doc";
     }
 
-    const inactiveBadge = !isActive
-      ? `<span class="badge-not-sending" title="Aba não ativa — não será enviada"><i class="fas fa-eye-slash"></i> não envia</span>`
-      : "";
-
     div.innerHTML = `
       ${thumbHtml}
       <div class="unified-file-info">
         <span class="unified-file-name" title="${escapeHTML(file.name)}">${escapeHTML(file.name)}</span>
         <div class="unified-file-badges">
           <span class="unified-badge ${badgeClass}">${badgeLabel}</span>
-          ${inactiveBadge}
         </div>
         ${captionHtml}
       </div>
@@ -2018,10 +1920,9 @@ async function sendMessages() {
   // Get interactive buttons/list data
   const interactiveData = getInteractiveData();
   const sendOrder = sendImage ? getSendOrder() : "text_first";
-  const activeTab = getActiveMediaTab();
-  const imagesToSend = sendImage && activeTab === "images" ? uploadedImages : [];
-  const videosToSend = sendImage && activeTab === "videos" ? uploadedVideos : [];
-  const docsToSend = sendImage && activeTab === "documents" ? uploadedDocs : [];
+  const imagesToSend = sendImage ? uploadedImages : [];
+  const videosToSend = sendImage ? uploadedVideos : [];
+  const docsToSend = sendImage ? uploadedDocs : [];
 
   if (!confirm(`Enviar para ${activeCustomers.length} contatos ativos?`)) return;
 
@@ -2482,11 +2383,10 @@ async function confirmSchedule() {
   const activeCustomers = customers.map((c, i) => ({ ...c, _idx: i })).filter((c) => c.active);
   const interactiveData = getInteractiveData();
   const sendImage = document.getElementById("sendImageCheck").checked;
-  if (sendImage && !hasUploadedMedia()) return alert("Nenhuma mídia carregada na aba ativa.");
-  const scheduleActiveTab = getActiveMediaTab();
-  const scheduleImages = sendImage && scheduleActiveTab === "images" ? uploadedImages : [];
-  const scheduleVideos = sendImage && scheduleActiveTab === "videos" ? uploadedVideos : [];
-  const scheduleDocs = sendImage && scheduleActiveTab === "documents" ? uploadedDocs : [];
+  if (sendImage && !hasUploadedMedia()) return alert("Nenhuma mídia carregada.");
+  const scheduleImages = sendImage ? uploadedImages : [];
+  const scheduleVideos = sendImage ? uploadedVideos : [];
+  const scheduleDocs = sendImage ? uploadedDocs : [];
 
   try {
     const res = await authFetch("/api/schedules", {
