@@ -29,3 +29,5 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://whatsapphebert.vercel.app
