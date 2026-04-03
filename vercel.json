@@ -36,7 +36,7 @@
     },
     {
       "source": "/app",
-      "destination": "/index.html"
+      "destination": "/app.html"
     },
     {
       "source": "/admin",
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "source": "/index.html",
+      "source": "/app.html",
       "headers": [
         {
           "key": "Cache-Control",

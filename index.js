@@ -511,9 +511,9 @@ app.get("/login", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
-// /app → dashboard (index.html) — servido como arquivo estático
+// /app → dashboard (app.html) — servido como arquivo estático
 app.get("/app", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.sendFile(path.join(__dirname, "public", "app.html"));
 });
 
 // /admin → admin panel

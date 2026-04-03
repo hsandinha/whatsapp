@@ -18,7 +18,7 @@ function hasForcedLoginFlag() {
 
 function clearForcedLoginFlag() {
     if (!hasForcedLoginFlag()) return;
-    window.location.replace(resolveAppUrl("/"));
+    window.history.replaceState({}, document.title, resolveAppUrl("/"));
 }
 
 async function clearInvalidSession() {
